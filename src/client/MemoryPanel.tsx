@@ -251,16 +251,15 @@ function ActivitySection({ runs }: { runs: readonly PanelReviewRun[] }): ReactNo
   )
 }
 
-/** Skills tab: the curator library, with user-owned skills marked. */
+/** Skills tab: what the background review has curated so far. */
 function SkillsSection({ skills }: { skills: readonly PanelSkill[] }): ReactNode {
-  if (skills.length === 0) return <p style={styles.note}>skill 库还是空的——等后台 review 从对话里沉淀,或用 /memory review 点名让它建。</p>
+  if (skills.length === 0) return <p style={styles.note}>还没有沉淀的 skill——等后台 review 从对话里提炼,或用 /memory review 点名让它建。</p>
   return (
     <div>
       {skills.map(skill => (
         <div key={skill.name} style={styles.runRow}>
           <div style={styles.runMeta}>
             <span style={{ color: 'var(--dsw-alias-label-primary)', fontWeight: 500 }}>{skill.name}</span>
-            {!skill.curatorManaged && <span style={styles.note}>手写</span>}
           </div>
           {skill.description !== '' && <p style={styles.note}>{skill.description}</p>}
         </div>

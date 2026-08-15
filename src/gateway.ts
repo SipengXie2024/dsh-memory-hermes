@@ -117,7 +117,9 @@ export class MemoryHermesGateway extends TypertRemoteService {
   @Remote('listSkills')
   async listSkills(): Promise<PanelSkillsResult> {
     if (this.skillStore === undefined) return { skills: [] }
-    const skills = await this.skillStore.list()
+    // The panel shows the curator's own work only; user-owned skills live
+    // in other systems' UIs.
+    const skills = (await this.skillStore.list()).filter(skill => skill.curatorManaged)
     return { skills: skills.map(skill => ({ name: skill.name, description: skill.description, curatorManaged: skill.curatorManaged })) }
   }
 }

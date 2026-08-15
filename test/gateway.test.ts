@@ -36,7 +36,7 @@ describe('MemoryHermesGateway wiring', () => {
 })
 
 describe('MemoryHermesGateway.listSkills', () => {
-  it('answers an empty list without a skill store, and rows with one', async () => {
+  it('answers an empty list without a skill store, and curator-managed rows only with one', async () => {
     expect((await gateway.listSkills()).skills).toEqual([])
     const withSkills = new MemoryHermesGateway(new Context(), store, () => [], {
       list: async () => [
@@ -45,9 +45,9 @@ describe('MemoryHermesGateway.listSkills', () => {
       ],
     })
     const { skills } = await withSkills.listSkills()
+    // User-owned skills are filtered out — the panel shows curator output only.
     expect(skills).toEqual([
       { name: 'dsh-plugin-workflow', description: 'UI 落位与打包', curatorManaged: true },
-      { name: 'agent-reach', description: '', curatorManaged: false },
     ])
   })
 })
