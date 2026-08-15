@@ -49,7 +49,7 @@ export interface MemoryToolDeps {
   readonly getApproval: () => ApprovalLike | undefined
 }
 
-interface MemoryToolArgs {
+export interface MemoryToolArgs {
   readonly action: string
   readonly file: string
   readonly content?: string
@@ -57,7 +57,7 @@ interface MemoryToolArgs {
   readonly new_content?: string
 }
 
-interface ValidatedCall {
+export interface ValidatedCall {
   readonly file: MemoryFileKey
   readonly op: MemoryOp
 }
@@ -82,7 +82,8 @@ function requireSingleLine(text: string): void {
   if (lineBreakClass.test(text)) throw multilineEntryError()
 }
 
-function validate(args: MemoryToolArgs): ValidatedCall {
+/** Shared by the tool's execute() and the background review's op replay. */
+export function validateMemoryArgs(args: MemoryToolArgs): ValidatedCall {
   // Mirrors the compiled-schema enum checks so direct execute() calls fail
   // safe too; `action` gets the same treatment via the switch default.
   if (args.file !== 'memory' && args.file !== 'user') {
@@ -130,7 +131,7 @@ function truncate(text: string, max: number): string {
 }
 
 /** The text a write introduces (undefined for remove). */
-function writtenText(op: MemoryOp): string | undefined {
+export function writtenText(op: MemoryOp): string | undefined {
   switch (op.action) {
     case 'add':
       return op.content
@@ -203,7 +204,7 @@ export function buildMemoryTool(deps: MemoryToolDeps) {
       }],
     },
     async execute(args: MemoryToolArgs, exec: { agent?: Agent; callId?: string; signal?: AbortSignal }): Promise<MutateResult> {
-      const call = validate(args)
+      const call = validateMemoryArgs(args)
       const written = writtenText(call.op)
       if (deps.securityScan && written !== undefined) {
         const hit = scan(written)

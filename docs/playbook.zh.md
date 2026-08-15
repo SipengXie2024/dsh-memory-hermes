@@ -1,6 +1,6 @@
 # dsh-memory-hermes 实测手册
 
-十步验收,镜像 dsh 官方 memory-mcp 笔记里的 validation contract(A 写入 → fresh B 召回 → B 使用),并补冻结/并发/扫描/审批/授权边界证据点。每步给命令、预期、排查。
+十二步验收,镜像 dsh 官方 memory-mcp 笔记里的 validation contract(A 写入 → fresh B 召回 → B 使用),并补冻结/并发/扫描/审批/授权边界/后台自省/web 面板证据点。每步给命令、预期、排查。
 
 约定:`$DSH_HOME` 默认 `~/.dsh`(Windows 即 `C:\Users\<你>\.dsh`);profile 名用 `memory-lab`;profile patch 指 `$DSH_HOME/profiles/memory-lab/cordis.patch.yml`。
 
@@ -158,3 +158,48 @@ dsh --profile memory-lab --dump-config
 ```
 
 **预期**:dump-config 无 memory-hermes 残留;`$DSH_HOME/memory/` 数据文件**保留**(插件不删数据);重装即恢复全部记忆。
+
+## 11. 后台自省(background review)
+
+> 步骤 11/12 需要插件在装载状态;若刚做完步骤 10 的卸载,先重新 `add`。
+
+前置:config 保持默认即可——`backgroundReview` 默认开、`approval` 默认关(`approval: true` 会自动禁用 review)。
+
+1. 新开 session,聊一个**含新事实但不要求记忆**的 turn,如:
+
+   > 顺便说下,我们团队的代码评审平台上个月换成 Gerrit 了。帮我写个 hello world。
+
+2. 等模型答完后稍候(一次后台 LLM 调用的时延,几秒到几十秒)。
+3. ```bash
+   type %USERPROFILE%\.dsh\memory\MEMORY.md
+   ```
+
+**预期**:MEMORY.md 自动多了一条 Gerrit 相关条目——你没让它记,是 turn 结束后的后台 review 存的。存不存、存多准取决于模型对 review 指令的遵守度【推断:遵守度因模型而异;证伪方式:步骤 9 模型矩阵跑同样对话对比】;模型判断没有新事实时回 NOTHING、什么也不写,也算正常。
+
+**递归抑制证据点**:在 `$DSH_HOME/sessions/` 查这个 session 的 JSONL——review 发生前后 turn 记录数不变,review 的调用与写入不出现在会话历史里。review 是 `ctx.llm.stream` 辅助调用,不经过 agent loop、不产生 turn 事件,所以结构上不存在「review 触发下一次 review」的循环。
+
+**排查**:
+- 一直不写 → 看 dsh 日志里 memory-hermes 的 warn(review 失败静默,只留日志);换一个更明确的事实句式再试。
+- 想确认功能开着 → `dsh --profile memory-lab --dump-config` 看 memory-hermes config 里的 `backgroundReview`。
+
+## 12. 记忆面板(web)
+
+1. 以 web 界面启动 dsh(同 profile)。
+2. **预期**:侧栏底部出现 Memory 按钮(笔记本图标;侧栏展开时带 "Memory" 文字,收窄成细栏时只剩图标)。
+3. 点开面板,走一轮增/改/删:
+   - 底部 `Add to MEMORY.md` 输入框写一条 → Enter 或点 Add;
+   - 条目上点 Edit → 改文本 → Save;
+   - 点 Del → Confirm(两击确认;Keep 取消)。
+4. 每步操作后对照文件:
+
+   ```bash
+   type %USERPROFILE%\.dsh\memory\MEMORY.md
+   ```
+
+   **预期**:面板操作即时落盘、内容一致;溢出/锁忙等错误的 message 原文显示在面板顶部,不崩。
+5. 别处写入(让模型记一条,或步骤 11 的 review)后,面板点 Refresh 应能看到——面板是拉取制,不自动推送。
+6. 浏览器控制台(F12)无本插件相关的加载错误。
+
+**排查**:
+- 按钮不出现 → 确认 `npm run build` 产出了 `dist/client.js`;确认 web 端用的是装了本插件的 profile;浏览器控制台看 module loader 报错。
+- 面板操作报 RPC 错(400/405)→ 多半是 client bundle 与 host 代码版本不一致,重新 `npm run build` 后重启 dsh。

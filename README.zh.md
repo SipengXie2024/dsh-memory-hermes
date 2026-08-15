@@ -16,6 +16,8 @@ Hermes 式有界策划记忆,做成 DeepSeek Harness(dsh)的用户侧插件。�
 | 安全扫描 | 写入时 + 注入渲染时 + **错误载荷**三处同一规则表:不可见 Unicode、注入话术、外传形状;命中即拒/隐藏 |
 | 审批闸门 | `approval: true` 时每次写走 dsh 审批(默认关) |
 | 并发安全 | 进程内 promise 链串行 + 跨进程 `.lock` 文件锁 + 原子写(照 dsh settings-file 同款姿势) |
+| 后台自省 | 每个正常完成的 turn 结束后,后台一次 LLM 调用重看本会话、自动提取值得长期记住的事实写入记忆;主对话零打扰(`backgroundReview` 默认开;`approval` 开启时自动禁用) |
+| 面板与命令 | dsh web 侧栏底部 Memory 面板(查看/增/改/删)+ `/memory` 斜杠命令(任意端的纯文本查看口) |
 
 ## 安装
 
@@ -36,7 +38,7 @@ dsh plugin --profile memory-lab add "C:/Users/<你>/OneDrive/Desktop/dsh-memory-
 
 ## 配置
 
-四个配置项,全部可省(schema 默认兜底)。改法:在 profile 的用户层 patch(`$DSH_HOME/profiles/memory-lab/cordis.patch.yml`)加一条 id 覆盖:
+九个配置项,全部可省(schema 默认兜底)。改法:在 profile 的用户层 patch(`$DSH_HOME/profiles/memory-lab/cordis.patch.yml`)加一条 id 覆盖:
 
 ```yaml
 - id: memory-hermes
@@ -45,10 +47,31 @@ dsh plugin --profile memory-lab add "C:/Users/<你>/OneDrive/Desktop/dsh-memory-
     memoryCharLimit: 2200   # MEMORY.md 上限(codepoint 计),最小 200
     userCharLimit: 1375     # USER.md 上限,最小 200
     securityScan: true      # 写入+注入双侧扫描
-    approval: false         # true = 每次写弹审批
+    approval: false         # true = 每次写弹审批(同时自动禁用 review)
+    backgroundReview: true  # 后台自省开关,见下节
+    reviewMaxTokens: 1000   # 单次 review 的输出 token 预算
+    reviewTimeoutMs: 60000  # 单次 review 超时(毫秒),最小 1000
+    # reviewProvider: deepseek    # review 换模型用;默认跟主会话(吃前缀缓存)
+    # reviewModel: deepseek-chat
 ```
 
 注意:id 覆盖是**整体替换 config,不深合并**——要改就把想要的字段写全(未写的字段回 schema 默认,恰好也是安全的)。
+
+## 后台自省(background review)
+
+移植 Hermes Agent 的 background_review 闭环:每个正常完成(completed)的 turn 结束后,插件在后台发起一次独立 LLM 调用重看本会话,提取「值得长期记住、且记忆里还没有」的事实(用户纠正、环境事实、稳定偏好),按 memory 工具同一套写入语义存盘。主对话不被打断,也看不到这次调用。
+
+- **成本**:每个 completed turn 多一次 LLM 调用,输出上限 `reviewMaxTokens`(默认 1000 token)。输入复刻主会话的 system + tools + 消息前缀,**同 provider/model 时命中厂商前缀缓存**,增量主要是末尾指令与输出;`reviewProvider`/`reviewModel` 指到便宜模型能省单价,但丢前缀缓存(整个输入按新模型全价计)。
+- **抢占**:同一 session 新 turn 完成会作废(abort)还没跑完的旧 review——新调用覆盖到最新的全会话视图,旧的没有信息增量。
+- **与审批互斥**:`approval: true` 时 review 自动整体禁用——后台没有可交互的 turn,审批弹不出来;绕过闸门又违背开审批的本意。
+- **失败静默**:review 调用出错(超时/网络/模型不配合)只记 warn 日志,不重试、不打扰主对话;写入成功记 info 日志(几条、哪个文件)。单条写入被拒(溢出/扫描命中/匹配失败)同样丢弃记日志,继续下一条。
+- **怎么关**:config 里 `backgroundReview: false`(config 热重载生效)。
+
+## 记忆面板与 /memory 命令
+
+- **web 面板**:dsh web 界面侧栏底部有 Memory 按钮,点开浮层面板:MEMORY.md / USER.md 两区,各带用量条与条目列表;条目可内联编辑(Edit → 改文本 → Save)、删除(Del → Confirm 两击确认)、底部输入框新增。数据打开时拉取、每次操作后重拉。
+- 面板编辑**不走审批闸、不受扫描拒写**:操作者就是审批人,手工编辑自己的本地文件也不在扫描的威胁模型内。会被扫描命中的条目在面板里带三角警示标记(悬停看说明),仅提示不拦截;锁忙/溢出等错误的 message 原文显示在面板内。
+- **`/memory` 斜杠命令**:任意端(headless / web / acp)输入 `/memory`,输出两文件的用量头与条目全文。profile 没装 commands 插件时命令静默不注册。
 
 ## 数据与卸载
 
@@ -67,7 +90,10 @@ dsh plugin --profile memory-lab add "C:/Users/<你>/OneDrive/Desktop/dsh-memory-
 - 原子写不 fsync(与 dsh settings 同款):崩溃可能丢最后一笔写,下个 session 读盘上现状即可。
 - 错误的 `code` 字段是 best-effort:`link:` 安装可能出现 `HarnessError` 双副本导致 code 丢失,因此**模型需要的信息全部在 message 文本里**,不依赖 code。
 - 溢出上限按 codepoint 计(与 Hermes 的 Python `len()` 一致);中文信息密度高,同字符数装得下更多事实,嫌紧可调大。
+- review 失败静默是取舍:后台调用出错只记日志、不重试,主对话永远不因 review 受影响;代价是「没存上」不会主动告诉你,要看日志或面板确认。
+- review 的写入质量(存不存、存多准)取决于模型对 review 指令的遵守度,因模型而异;不满意就关掉或换 `reviewModel`。
+- 面板刷新是拉取不是推送(dsh 的 client 推送通道是白名单制,插件进不去):别处写入(模型工具 / review / 另一进程)后,点 Refresh 或重开面板才可见。
 
 ## 实测
 
-装载后按 [docs/playbook.zh.md](docs/playbook.zh.md) 十步走一遍:写入→fresh 召回→冻结→溢出→扫描→审批→session-query→并发→模型矩阵→卸载。
+装载后按 [docs/playbook.zh.md](docs/playbook.zh.md) 十二步走一遍:写入→fresh 召回→冻结→溢出→扫描→审批→session-query→并发→模型矩阵→卸载→后台自省→web 面板。
