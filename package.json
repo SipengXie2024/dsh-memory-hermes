@@ -1,6 +1,6 @@
 {
   "name": "dsh-memory-hermes",
-  "version": "0.2.1",
+  "version": "0.2.3",
   "description": "Hermes-style bounded curated memory for DeepSeek Harness (out-of-tree plugin)",
   "type": "module",
   "main": "dist/index.js",
