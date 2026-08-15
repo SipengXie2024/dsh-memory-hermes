@@ -2,13 +2,13 @@
 
 十二步验收,镜像 dsh 官方 memory-mcp 笔记里的 validation contract(A 写入 → fresh B 召回 → B 使用),并补冻结/并发/扫描/审批/授权边界/后台自省/web 面板证据点。每步给命令、预期、排查。
 
-约定:`$DSH_HOME` 默认 `~/.dsh`(Windows 即 `C:\Users\<你>\.dsh`);profile 名用 `memory-lab`;profile patch 指 `$DSH_HOME/profiles/memory-lab/cordis.patch.yml`。
+约定:`$DSH_HOME` 默认 `~/.dsh`(Windows 即 `C:\Users\<你>\.dsh`);装进 dsh **内置的 `web` profile**(不要自建 profile,原因见步骤 0);profile patch 指 `$DSH_HOME/profiles/web/cordis.patch.yml`。
 
 ## 改动生效方式(先记住这张表)
 
 | 改什么 | 怎么生效 |
 |---|---|
-| 插件源码(`src/`) | `npm run build` 后**重启 dsh**(bundle 层不热重载) |
+| 插件源码(`src/`) | `npm run build && npm pack` → 重新 `dsh plugin --profile web add <tgz>` → **重启 dsh**(tgz 是快照不是链接;怀疑没生效就先 bump `package.json` 版本再 pack) |
 | profile patch 里的 config(如 `memoryCharLimit`) | 保存即热重载(config-only HMR)【事实,profile-boot.ts】 |
 | profile patch 新增/删除插件行 | **重启 dsh**【推断:HMR 注释明说 config-only;证伪方式:插完行不重启看 dump-config】 |
 | 手改 `$DSH_HOME/memory/*.md` | 下个新 session 的快照(冻结语义,当前 session 不变) |
@@ -22,22 +22,28 @@ cd C:/Users/72334/OneDrive/Desktop/dsh-memory-hermes
 npm install
 npm run check
 npm run build
+npm pack
 ```
 
 ```bash
-dsh plugin --profile memory-lab add "C:/Users/72334/OneDrive/Desktop/dsh-memory-hermes"
+dsh plugin --profile web add "./dsh-memory-hermes-0.1.0.tgz"
 ```
 
 ```bash
-dsh --profile memory-lab --dump-config
+dsh --profile web --dump-config
 ```
 
 **预期**:dump-config 输出里出现 `memory-hermes` 行(插件树的一层)。
 
+**为什么必须「tgz + 内置 web profile」**(2026-08-15 实测,两种违反姿势各对应一种运行时崩溃):
+
+- 裸目录/`link:` 安装 → Node 沿 realpath 把解析链引向插件自己 devDeps 的 `node_modules`,`TypertRemoteService` 基类变成插件本地副本,宿主认不出 gateway 服务 → 面板 RPC 全 404;
+- 自建 profile 再手动补装 `@deepseek-ai/dsh-web-app` → 副本遮蔽 `$DSH_HOME/profiles/node_modules` 共享运行时层,工具调度器 Symbol 跨副本查空 → 每次工具调用报 `Cannot read properties of undefined (reading 'prepare')` 整轮失败。内置 web profile 模板自带 base + web-app,从共享层单树解析,没这两个问题。`$DSH_HOME/profiles/node_modules` 是 dsh 首次 boot 物化的运行时,**不要删**。
+
 **排查**:
 - `add` 时 pnpm 报 build-script 警告并给出 allowBuilds 提示 → 按提示把它打印的 key 加进 profile 目录的 `pnpm-workspace.yaml` 后重跑【事实,dsh apps/cli 的 plugin add 流程就是这么指引的】。
-- dump-config 没有 memory-hermes → 确认本包 `package.json` 里有 `"dsh": {"bundle": {"patch": "./cordis.patch.yml"}}`;确认 `$DSH_HOME/profiles/memory-lab/package.json` 的 `dsh.profile.bundles` 数组里出现了 `dsh-memory-hermes`(装载会自动回填,不用手写)。
-- OneDrive 下 link 异常(装上但解析不到)→ 把整个插件目录复制到本地盘(如 `C:\dev\dsh-memory-hermes`)重新 add。
+- dump-config 没有 memory-hermes → 确认本包 `package.json` 里有 `"dsh": {"bundle": {"patch": "./cordis.patch.yml"}}`;确认 `$DSH_HOME/profiles/web/package.json` 的 `dsh.profile.bundles` 数组里出现了 `dsh-memory-hermes`(装载会自动回填,不用手写)。
+- pnpm 直连 npmjs 卡死不动 → 在 `$DSH_HOME/profiles/web/` 建 `.npmrc` 写一行 `registry=https://registry.npmmirror.com` 再重跑(2026-08-15 实测直连两次超时,换镜像 4 秒完成)。
 
 ## 1. 写入
 
@@ -150,11 +156,11 @@ profile patch 的 memory-hermes 覆盖里加 `approval: true`(热重载)。让�
 ## 10. 卸载回归
 
 ```bash
-dsh plugin --profile memory-lab remove dsh-memory-hermes
+dsh plugin --profile web remove dsh-memory-hermes
 ```
 
 ```bash
-dsh --profile memory-lab --dump-config
+dsh --profile web --dump-config
 ```
 
 **预期**:dump-config 无 memory-hermes 残留;`$DSH_HOME/memory/` 数据文件**保留**(插件不删数据);重装即恢复全部记忆。
@@ -180,11 +186,11 @@ dsh --profile memory-lab --dump-config
 
 **排查**:
 - 一直不写 → 看 dsh 日志里 memory-hermes 的 warn(review 失败静默,只留日志);换一个更明确的事实句式再试。
-- 想确认功能开着 → `dsh --profile memory-lab --dump-config` 看 memory-hermes config 里的 `backgroundReview`。
+- 想确认功能开着 → `dsh --profile web --dump-config` 看 memory-hermes config 里的 `backgroundReview`。
 
 ## 12. 记忆面板(web)
 
-1. 以 web 界面启动 dsh(同 profile)。
+1. `dsh web` 启动(等价于 `dsh --profile web`;`--port` 可换端口)。
 2. **预期**:侧栏底部出现 Memory 按钮(笔记本图标;侧栏展开时带 "Memory" 文字,收窄成细栏时只剩图标)。
 3. 点开面板,走一轮增/改/删:
    - 底部 `Add to MEMORY.md` 输入框写一条 → Enter 或点 Add;
@@ -202,4 +208,4 @@ dsh --profile memory-lab --dump-config
 
 **排查**:
 - 按钮不出现 → 确认 `npm run build` 产出了 `dist/client.js`;确认 web 端用的是装了本插件的 profile;浏览器控制台看 module loader 报错。
-- 面板操作报 RPC 错(400/405)→ 多半是 client bundle 与 host 代码版本不一致,重新 `npm run build` 后重启 dsh。
+- 面板操作报 RPC 错(400/405)→ 多半是 client bundle 与 host 代码版本不一致,`npm run build && npm pack` 后重新 add 再重启 dsh;**404** 则先查安装姿势——`link:`/裸目录装的会因类副本断裂导致 gateway 不被识别(见步骤 0)。

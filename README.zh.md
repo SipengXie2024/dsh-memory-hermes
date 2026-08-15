@@ -21,24 +21,29 @@ Hermes 式有界策划记忆,做成 DeepSeek Harness(dsh)的用户侧插件。�
 
 ## 安装
 
-前置:Node 22+,dsh CLI 可用。
+前置:Node 22+(dsh 要求 ^22.19 || >=24),dsh CLI 可用(`npm install -g @deepseek-ai/dsh@0.1.0-rc.6`,钉版本)。
 
 ```bash
 cd dsh-memory-hermes
 npm install
 npm run build
+npm pack
 ```
 
 ```bash
-dsh plugin --profile memory-lab add "C:/Users/<你>/OneDrive/Desktop/dsh-memory-hermes"
+dsh plugin --profile web add "./dsh-memory-hermes-0.1.0.tgz"
 ```
 
-- profile 首次使用自动创建;装完 `dsh --profile memory-lab --dump-config` 应能看到 `memory-hermes` 层。
-- 目录在 OneDrive 下如遇 link 异常,把整个目录复制到本地盘(如 `C:\dev\`)再 add。
+两条硬规矩(2026-08-15 实测教训,违反会得到两种运行时崩溃):
+
+- **必须用 `npm pack` 出的 tgz 安装,不要裸目录/`link:`**。链接安装时 Node 会顺着 realpath 解析到插件自己 devDeps 的 `node_modules`,`TypertRemoteService` 等基类变成插件本地副本,宿主认不出这个服务 → 面板 RPC 全部 404。
+- **装进内置 profile(web/tui/headless),不要在自定义 profile 里手动补装 `@deepseek-ai/dsh-web-app`**。dsh 把运行时物化在 `$DSH_HOME/profiles/node_modules` 共享层,自定义 profile 里 pnpm 装的 web-app 副本会遮蔽它,工具调度器的 Symbol 跨副本查空 → 每次工具调用整轮失败(`Cannot read properties of undefined (reading 'prepare')`)。内置 web profile 的模板自带 base + web-app,从共享层单树解析。
+
+装完 `dsh --profile web --dump-config` 应能看到 `memory-hermes` 层。改代码后的更新:`npm run build && npm pack`,重新 `add`;若怀疑没生效,先 bump `package.json` 版本再 pack【推断:pnpm 对同路径本地 tgz 的缓存行为未完全核实】。
 
 ## 配置
 
-九个配置项,全部可省(schema 默认兜底)。改法:在 profile 的用户层 patch(`$DSH_HOME/profiles/memory-lab/cordis.patch.yml`)加一条 id 覆盖:
+九个配置项,全部可省(schema 默认兜底)。改法:在 profile 的用户层 patch(`$DSH_HOME/profiles/web/cordis.patch.yml`)加一条 id 覆盖:
 
 ```yaml
 - id: memory-hermes
@@ -76,7 +81,7 @@ dsh plugin --profile memory-lab add "C:/Users/<你>/OneDrive/Desktop/dsh-memory-
 ## 数据与卸载
 
 - 记忆数据:`$DSH_HOME/memory/MEMORY.md` 与 `USER.md`(`$DSH_HOME` 默认 `~/.dsh`)。纯文本,每行一条 `- ` 前缀,可手工检查/编辑;手改在**下个 session** 生效。
-- 卸载:`dsh plugin --profile memory-lab remove dsh-memory-hermes`(`dsh plugin` 就是 pnpm 转发)。数据文件不会被删,不要了手工删 `$DSH_HOME/memory/`。
+- 卸载:`dsh plugin --profile web remove dsh-memory-hermes`(`dsh plugin` 就是 pnpm 转发)。数据文件不会被删,不要了手工删 `$DSH_HOME/memory/`。
 
 ## 已知边界(设计取舍,非 bug)
 
