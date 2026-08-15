@@ -46,7 +46,16 @@ dsh plugin --profile web add "./dsh-memory-hermes-<version>.tgz"
 
 ## 配置
 
-v2 起配置走 dsh **settings 服务**:插件注册 `memory-hermes` 命名空间,bundle patch 的 entry config 作为 `base`(组合层打底),用户在设置 GUI 或 settings 文档里的覆盖**即时生效**(`settings/updated` 驱动,限额/扫描/review 策略热切换,冻结快照除外——它按渲染时的值)。没有 settings 服务的 profile 退化为只用 entry config。
+v2 起配置走 dsh **settings 服务**:插件注册 `memory-hermes` 命名空间,bundle patch 的 entry config 作为 `base`(组合层打底),`$DSH_HOME/settings.yaml` 文档里的同名 section 作为用户层覆盖,**热生效**(`settings/updated` 驱动,限额/扫描/review 策略即时切换;已冻结的会话快照不变)。没有 settings 服务的 profile 退化为只用 entry config。
+
+注意(rc.6 边界):dsh web 的设置 GUI 只暴露白名单内的命名空间(apiproxy 硬编码;「插件自暴露」在官方 deferred work 清单里),所以本插件的配置通道是 **settings.yaml 文档**——在文档里加:
+
+```yaml
+memory-hermes:
+  memoryCharLimit: 3000   # 只写要覆盖的字段,其余回 base/默认
+```
+
+保存即生效,无需重启(已实测:外部编辑 → chokidar 监视 → 热发布)。
 
 全部配置项(schema 默认兜底;写在 profile 用户层 patch `$DSH_HOME/profiles/web/cordis.patch.yml`):
 

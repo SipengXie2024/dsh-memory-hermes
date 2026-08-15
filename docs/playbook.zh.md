@@ -9,7 +9,7 @@
 | 改什么 | 怎么生效 |
 |---|---|
 | 插件源码(`src/`) | `npm run build && npm pack` → 重新 `dsh plugin --profile web add <tgz>` → **重启 dsh**(tgz 是快照不是链接;host 半边必须重启,**client 半边(设置页)刷新页面即可**——增量 client scan 会直接服务新 bundle) |
-| 设置 GUI / settings 文档里的 `memory-hermes` 命名空间 | **保存即生效**(`settings/updated` 驱动:限额、扫描、review 策略热切换;已冻结的会话快照不变)【v2 新增】 |
+| `$DSH_HOME/settings.yaml` 文档里的 `memory-hermes` section | **保存即生效**(`settings/updated` 驱动:限额、扫描、review 策略热切换;已冻结的会话快照不变)【v2 新增;rc.6 的设置 GUI 只暴露白名单命名空间,本插件走文档通道】 |
 | profile patch 里的 config(作为 settings 的 base) | 保存即热重载(config-only HMR)【事实,profile-boot.ts】 |
 | profile patch 新增/删除插件行 | **重启 dsh**【推断:HMR 注释明说 config-only;证伪方式:插完行不重启看 dump-config】 |
 | 手改 `$DSH_HOME/memory/*.md` | 下个新 session 的快照(冻结语义,当前 session 不变) |
@@ -122,7 +122,14 @@ profile patch 加(保存即热重载,不用重启):
 
 ## 6. 审批闸门
 
-设置 GUI 的 memory-hermes 命名空间(或 profile patch 的 base)里把 `approval` 设为 `true`(v2 起热生效,不用重启)。让模型记一条。
+`$DSH_HOME/settings.yaml` 加一段(或改 profile patch 的 base;v2 起热生效,不用重启):
+
+```yaml
+memory-hermes:
+  approval: true
+```
+
+让模型记一条。
 
 **预期**:出现 dsh 审批交互(v2 起由 `tools/pre-execute` 策略监听器发起 ask,运行时把它转成审批请求);**批准** → 落盘 + Saved 回显;**拒绝** → 写入失败,文件无变化。无审批渠道的环境(如纯 headless 无 answerer)下闸门 fail-closed 拒写。测完删掉这行(回默认 false)。
 
@@ -170,7 +177,7 @@ dsh --profile web --dump-config
 
 > 步骤 11/12/13 需要插件在装载状态;若刚做完步骤 10 的卸载,先重新 `add`。
 
-前置:config 保持默认即可,但注意 **v2 默认触发策略是 `token-delta`**(会话估算 token 自上次 review 增长 ≥4000 才跑)——单个小 turn 不会触发。本步骤先把 `reviewTrigger` 改成 `every-turn`(设置 GUI 的 memory-hermes 命名空间,或 profile patch 的 base;热生效),测完改回。
+前置:config 保持默认即可,但注意 **v2 默认触发策略是 `token-delta`**(会话估算 token 自上次 review 增长 ≥4000 才跑)——单个小 turn 不会触发。本步骤先把 `reviewTrigger` 改成 `every-turn`(settings.yaml 的 memory-hermes section,或 profile patch 的 base;热生效),测完改回。
 
 1. 新开 session,聊一个**含新事实但不要求记忆**的 turn,如:
 
@@ -189,7 +196,7 @@ dsh --profile web --dump-config
 
 **排查**:
 - 一直不写 → 先看活动页签有没有记录、记录里是什么错误;再看触发策略是不是改回了 every-turn。
-- 想确认功能开着 → 设置 GUI 的 memory-hermes 命名空间看 `backgroundReview`。
+- 想确认功能开着 → settings.yaml 或 profile patch 看 `backgroundReview`;活动页签有记录即在跑。
 
 ## 12. compaction 收割(v2 新增)
 
