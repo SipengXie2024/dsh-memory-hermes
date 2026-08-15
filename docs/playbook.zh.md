@@ -1,6 +1,6 @@
 # dsh-memory-hermes 实测手册
 
-十二步验收,镜像 dsh 官方 memory-mcp 笔记里的 validation contract(A 写入 → fresh B 召回 → B 使用),并补冻结/并发/扫描/审批/授权边界/后台自省/web 面板证据点。每步给命令、预期、排查。
+十三步验收(v2),镜像 dsh 官方 memory-mcp 笔记里的 validation contract(A 写入 → fresh B 召回 → B 使用),并补冻结/并发/扫描/审批/授权边界/后台自省/收割/合并/设置页证据点。每步给命令、预期、排查。
 
 约定:`$DSH_HOME` 默认 `~/.dsh`(Windows 即 `C:\Users\<你>\.dsh`);装进 dsh **内置的 `web` profile**(不要自建 profile,原因见步骤 0);profile patch 指 `$DSH_HOME/profiles/web/cordis.patch.yml`。
 
@@ -8,8 +8,9 @@
 
 | 改什么 | 怎么生效 |
 |---|---|
-| 插件源码(`src/`) | `npm run build && npm pack` → 重新 `dsh plugin --profile web add <tgz>` → **重启 dsh**(tgz 是快照不是链接;怀疑没生效就先 bump `package.json` 版本再 pack) |
-| profile patch 里的 config(如 `memoryCharLimit`) | 保存即热重载(config-only HMR)【事实,profile-boot.ts】 |
+| 插件源码(`src/`) | `npm run build && npm pack` → 重新 `dsh plugin --profile web add <tgz>` → **重启 dsh**(tgz 是快照不是链接;host 半边必须重启,**client 半边(设置页)刷新页面即可**——增量 client scan 会直接服务新 bundle) |
+| 设置 GUI / settings 文档里的 `memory-hermes` 命名空间 | **保存即生效**(`settings/updated` 驱动:限额、扫描、review 策略热切换;已冻结的会话快照不变)【v2 新增】 |
+| profile patch 里的 config(作为 settings 的 base) | 保存即热重载(config-only HMR)【事实,profile-boot.ts】 |
 | profile patch 新增/删除插件行 | **重启 dsh**【推断:HMR 注释明说 config-only;证伪方式:插完行不重启看 dump-config】 |
 | 手改 `$DSH_HOME/memory/*.md` | 下个新 session 的快照(冻结语义,当前 session 不变) |
 
@@ -26,7 +27,7 @@ npm pack
 ```
 
 ```bash
-dsh plugin --profile web add "./dsh-memory-hermes-0.1.0.tgz"
+dsh plugin --profile web add "./dsh-memory-hermes-0.2.0.tgz"
 ```
 
 ```bash
@@ -121,13 +122,13 @@ profile patch 加(保存即热重载,不用重启):
 
 ## 6. 审批闸门
 
-profile patch 的 memory-hermes 覆盖里加 `approval: true`(热重载)。让模型记一条。
+设置 GUI 的 memory-hermes 命名空间(或 profile patch 的 base)里把 `approval` 设为 `true`(v2 起热生效,不用重启)。让模型记一条。
 
-**预期**:出现 dsh 审批交互;**批准** → 落盘 + Saved 回显;**拒绝** → 模型收到 `The user declined this memory write.`,文件无变化。测完删掉这行(回默认 false)。
+**预期**:出现 dsh 审批交互(v2 起由 `tools/pre-execute` 策略监听器发起 ask,运行时把它转成审批请求);**批准** → 落盘 + Saved 回显;**拒绝** → 写入失败,文件无变化。无审批渠道的环境(如纯 headless 无 answerer)下闸门 fail-closed 拒写。测完删掉这行(回默认 false)。
 
 ## 7. session-query(可选件)
 
-把 [session-query.snippet.yml](session-query.snippet.yml) 的两段并进 profile patch(先把 path 占位符改成真实路径),**重启 dsh**(新增插件行)。
+> 本机已于 2026-08-15 随 v2 升级启用(tool-session-query 入 profile deps + sqlite 后端指持久路径)。新机器照 [session-query.snippet.yml](session-query.snippet.yml) 的两段并进 profile patch(先把 path 占位符改成真实路径),**重启 dsh**(新增插件行)。
 
 1. session A 里聊一个独特词(如「青花瓷协议」),关掉;
 2. **同一目录**新开 B:「用 session_search 搜『青花瓷协议』」→ **预期:命中 A**;
@@ -167,9 +168,9 @@ dsh --profile web --dump-config
 
 ## 11. 后台自省(background review)
 
-> 步骤 11/12 需要插件在装载状态;若刚做完步骤 10 的卸载,先重新 `add`。
+> 步骤 11/12/13 需要插件在装载状态;若刚做完步骤 10 的卸载,先重新 `add`。
 
-前置:config 保持默认即可——`backgroundReview` 默认开、`approval` 默认关(`approval: true` 会自动禁用 review)。
+前置:config 保持默认即可,但注意 **v2 默认触发策略是 `token-delta`**(会话估算 token 自上次 review 增长 ≥4000 才跑)——单个小 turn 不会触发。本步骤先把 `reviewTrigger` 改成 `every-turn`(设置 GUI 的 memory-hermes 命名空间,或 profile patch 的 base;热生效),测完改回。
 
 1. 新开 session,聊一个**含新事实但不要求记忆**的 turn,如:
 
@@ -182,17 +183,30 @@ dsh --profile web --dump-config
 
 **预期**:MEMORY.md 自动多了一条 Gerrit 相关条目——你没让它记,是 turn 结束后的后台 review 存的。存不存、存多准取决于模型对 review 指令的遵守度【推断:遵守度因模型而异;证伪方式:步骤 9 模型矩阵跑同样对话对比】;模型判断没有新事实时回 NOTHING、什么也不写,也算正常。
 
-**递归抑制证据点**:在 `$DSH_HOME/sessions/` 查这个 session 的 JSONL——review 发生前后 turn 记录数不变,review 的调用与写入不出现在会话历史里。review 是 `ctx.llm.stream` 辅助调用,不经过 agent loop、不产生 turn 事件,所以结构上不存在「review 触发下一次 review」的循环。
+**可观测性证据点(v2)**:打开设置页「记忆」→「活动」页签——应有一条 `回合` 类型的记录:存了几条、弃了几条、条目摘要;失败则带错误文本。「跑了没存」与「没跑」从此可分,不用翻日志。
+
+**递归抑制证据点**:在 `$DSH_HOME/sessions/` 查这个 session 的日志——review 发生前后 turn 记录数不变,review 的调用与写入不出现在会话历史里。review 是 `ctx.llm.stream` 辅助调用,不经过 agent loop、不产生 turn 事件,所以结构上不存在「review 触发下一次 review」的循环。
 
 **排查**:
-- 一直不写 → 看 dsh 日志里 memory-hermes 的 warn(review 失败静默,只留日志);换一个更明确的事实句式再试。
-- 想确认功能开着 → `dsh --profile web --dump-config` 看 memory-hermes config 里的 `backgroundReview`。
+- 一直不写 → 先看活动页签有没有记录、记录里是什么错误;再看触发策略是不是改回了 every-turn。
+- 想确认功能开着 → 设置 GUI 的 memory-hermes 命名空间看 `backgroundReview`。
 
-## 12. 记忆面板(web)
+## 12. compaction 收割(v2 新增)
+
+前置:`reviewTrigger` 与 `compactionHarvest` 保持默认。
+
+1. 开一个长会话,聊到触发 compaction(或手动 `/compact`)。
+2. 折叠发生后稍候,看设置页「记忆」→「活动」页签。
+
+**预期**:出现一条 `折叠收割`(compaction)类型的记录——compaction/start 事件触发了一次收割 review,输入是**折叠前**的完整消息(回调内同步快照,折叠先落地也丢不了输入)。若收割存了条目,MEMORY.md 可见。
+
+**排查**:没有收割记录 → 确认确实发生了 compaction(活动页签只有 review,不记 compaction 本身);确认 `compactionHarvest` 没关、`approval` 没开(开审批会抑制一切后台 review)。
+
+## 13. 设置页与人审合并(web)
 
 1. `dsh web` 启动(等价于 `dsh --profile web`;`--port` 可换端口)。
-2. **预期**:侧栏底部出现 Memory 按钮(笔记本图标;侧栏展开时带 "Memory" 文字,收窄成细栏时只剩图标)。
-3. 点开面板,走一轮增/改/删:
+2. 打开设置(齿轮)→ 左侧导航应有「记忆」页(v2 起;v0.1.1 之前在侧栏底部,因与 Cordis 动态插件卡片视觉重叠而迁移)。
+3. 「文件」页签走一轮增/改/删:
    - 底部 `Add to MEMORY.md` 输入框写一条 → Enter 或点 Add;
    - 条目上点 Edit → 改文本 → Save;
    - 点 Del → Confirm(两击确认;Keep 取消)。
@@ -203,9 +217,10 @@ dsh --profile web --dump-config
    ```
 
    **预期**:面板操作即时落盘、内容一致;溢出/锁忙等错误的 message 原文显示在面板顶部,不崩。
-5. 别处写入(让模型记一条,或步骤 11 的 review)后,面板点 Refresh 应能看到——面板是拉取制,不自动推送。
-6. 浏览器控制台(F12)无本插件相关的加载错误。
+5. `/memory compact`:在会话里输入 → 稍候出现审批交互,摘要形如 `MEMORY.md N -> M entries`;**批准** → 两文件被合并重写,命令回显前后用量对比;**拒绝** → 不落盘,方案全文回显。无审批渠道时只回显方案。(合并质量因模型而异;方案需同时含 `## MEMORY.md` 与 `## USER.md` 两节,协议不符时安全失败不写。)
+6. 别处写入(让模型记一条,或 review)后,面板点 Refresh 应能看到——面板是拉取制,不自动推送。
+7. 浏览器控制台(F12)无本插件相关的加载错误。
 
 **排查**:
-- 按钮不出现 → 确认 `npm run build` 产出了 `dist/client.js`;确认 web 端用的是装了本插件的 profile;浏览器控制台看 module loader 报错。
+- 「记忆」页不出现 → 确认 `npm run build` 产出了 `dist/client.js`;确认 web 端用的是装了本插件的 profile;刷新页面(client bundle 增量扫描,不必重启);浏览器控制台看 module loader 报错。
 - 面板操作报 RPC 错(400/405)→ 多半是 client bundle 与 host 代码版本不一致,`npm run build && npm pack` 后重新 add 再重启 dsh;**404** 则先查安装姿势——`link:`/裸目录装的会因类副本断裂导致 gateway 不被识别(见步骤 0)。
