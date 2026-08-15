@@ -210,7 +210,7 @@ function FileSection({ file, busy, editing, confirming, onEdit, onDraft, onSave,
   )
 }
 
-const KIND_LABEL: Record<PanelReviewRun['kind'], string> = { turn: '回合', compaction: '折叠收割', manual: '手动' }
+const KIND_LABEL: Record<PanelReviewRun['kind'], string> = { turn: '回合', compaction: '折叠收割', manual: '手动', curator: '库维护' }
 
 /** Activity tab: one row per settled background review pass, newest first. */
 function ActivitySection({ runs }: { runs: readonly PanelReviewRun[] }): ReactNode {
@@ -260,6 +260,14 @@ function SkillsSection({ skills }: { skills: readonly PanelSkill[] }): ReactNode
         <div key={skill.name} style={styles.runRow}>
           <div style={styles.runMeta}>
             <span style={{ color: 'var(--dsw-alias-label-primary)', fontWeight: 500 }}>{skill.name}</span>
+            {skill.pinned === true && <span>已置顶</span>}
+            {skill.state === 'stale' && <span style={{ color: 'var(--dsw-alias-state-warn-label, var(--dsw-alias-state-error-primary))' }}>沉寂</span>}
+            {skill.useCount !== undefined && (
+              <span>
+                {skill.useCount === 0 ? '没用过' : `用过 ${skill.useCount} 次`}
+                {skill.lastUsedAt !== undefined && `,最近 ${new Date(skill.lastUsedAt).toLocaleDateString()}`}
+              </span>
+            )}
           </div>
           {skill.description !== '' && <p style={styles.note}>{skill.description}</p>}
         </div>

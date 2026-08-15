@@ -85,6 +85,14 @@ interface ManageArgs {
   file_path?: string
 }
 
+/** Lifecycle callbacks the owner hangs on mutating actions (telemetry).
+ * Fired after the store operation succeeded; failures inside a hook are the
+ * hook's own problem (callers pass fire-and-forget wrappers). */
+export interface SkillMutationHooks {
+  onCreate?(name: string): void
+  onDelete?(name: string): void
+}
+
 export class ForkSkillTools {
   readonly counts: SkillActionCounts = {
     created: 0,
@@ -99,7 +107,10 @@ export class ForkSkillTools {
   /** Targets this run has viewed (read-before-write evidence). */
   private readonly readPaths = new Set<string>()
 
-  constructor(private readonly store: CuratorSkillStore) {}
+  constructor(
+    private readonly store: CuratorSkillStore,
+    private readonly hooks: SkillMutationHooks = {},
+  ) {}
 
   /** Execute one fork tool call; the reply text becomes the tool result. */
   async execute(toolName: string, argsJson: string): Promise<{ text: string; isError: boolean }> {
@@ -168,6 +179,7 @@ export class ForkSkillTools {
         await this.store.create(name, args.description, args.content)
         this.counts.created += 1
         this.touch(name)
+        this.hooks.onCreate?.(name)
         return { text: `Created skill "${name}".`, isError: false }
       }
       case 'edit': {
@@ -193,6 +205,7 @@ export class ForkSkillTools {
         await this.store.delete(name)
         this.counts.deleted += 1
         this.touch(name)
+        this.hooks.onDelete?.(name)
         return { text: `Deleted skill "${name}".`, isError: false }
       }
       case 'write_file': {

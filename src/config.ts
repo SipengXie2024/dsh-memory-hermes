@@ -54,6 +54,28 @@ export interface Config {
   skillRoot?: string
   /** Per-file byte cap for skill writes. */
   skillMaxBytes?: number
+  /** Curator layer master switch: usage telemetry, stale marking, scheduling. */
+  curatorEnabled?: boolean
+  /** LLM consolidation pass (the lossy half); off = deterministic marking only. */
+  curatorConsolidate?: boolean
+  /** Minimum hours between two scheduled curator runs. */
+  curatorIntervalHours?: number
+  /** Required quiet window (hours) before a scheduled run fires. */
+  curatorMinIdleHours?: number
+  /** Days without observed use before a skill is marked stale. */
+  curatorStaleAfterDays?: number
+  /** Maximum LLM steps in one curator pass (whole-library work needs more than a review). */
+  curatorMaxSteps?: number
+  /** Output budget of one curator step. */
+  curatorMaxTokens?: number
+  /** Abort the whole curator pass after this long. */
+  curatorTimeoutMs?: number
+  /** Retained pre-run skill backups (oldest pruned beyond this). */
+  curatorMaxBackups?: number
+  /** Curator model override; falls back to reviewProvider/reviewModel, then
+   * the host's current default model selection. */
+  curatorProvider?: string
+  curatorModel?: string
 }
 
 /** Schemastery config; drives Loader defaults, settings UI, and config docs. */
@@ -76,9 +98,24 @@ export const Config: z<Config> = z.object({
   reviewMaxSteps: z.number().step(1).min(1).max(32).default(8),
   skillRoot: z.string(),
   skillMaxBytes: z.number().step(1).min(1024).default(65536),
+  curatorEnabled: z.boolean().default(true),
+  curatorConsolidate: z.boolean().default(true),
+  // Interval/idle/stale windows accept fractions so a verification instance
+  // can run minute-scale schedules.
+  curatorIntervalHours: z.number().min(0).default(168),
+  curatorMinIdleHours: z.number().min(0).default(2),
+  curatorStaleAfterDays: z.number().min(0).default(30),
+  curatorMaxSteps: z.number().step(1).min(1).max(64).default(16),
+  curatorMaxTokens: z.number().step(1).min(200).default(4000),
+  curatorTimeoutMs: z.number().step(1).min(10_000).default(300_000),
+  curatorMaxBackups: z.number().step(1).min(1).default(5),
+  curatorProvider: z.string(),
+  curatorModel: z.string(),
 })
 
-/** Config with schema defaults applied; the model-override pair and the
+/** Optional keys that carry no schema default (absent means "inherit"). */
+type OptionalKeys = 'reviewProvider' | 'reviewModel' | 'skillRoot' | 'curatorProvider' | 'curatorModel'
+
+/** Config with schema defaults applied; the model-override pairs and the
  * optional skill-root override stay optional. */
-export type Resolved = Required<Omit<Config, 'reviewProvider' | 'reviewModel' | 'skillRoot'>>
-  & Pick<Config, 'reviewProvider' | 'reviewModel' | 'skillRoot'>
+export type Resolved = Required<Omit<Config, OptionalKeys>> & Pick<Config, OptionalKeys>

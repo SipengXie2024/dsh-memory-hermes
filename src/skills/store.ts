@@ -16,7 +16,7 @@
 import { mkdir, readdir, readFile, rm, stat } from 'node:fs/promises'
 import { dirname, join, resolve, sep } from 'node:path'
 import { withFileLock, writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
-import { CURATOR_MARKER, isCuratorManaged, parseFrontmatter, renderSkillFile } from './provenance.js'
+import { CURATOR_MARKER, adoptSkillText, isCuratorManaged, parseFrontmatter, renderSkillFile } from './provenance.js'
 
 /** Support-file directories a write_file/remove_file may target. */
 export const SUPPORT_DIRS = ['references', 'templates', 'scripts', 'assets'] as const
@@ -105,7 +105,8 @@ export class CuratorSkillStore {
     return text
   }
 
-  /** Depth-2 scan for `<root>/<name>/SKILL.md` and `<root>/<category>/<name>/SKILL.md`. */
+  /** Depth-1 scan for `<root>/<name>/SKILL.md` — dsh's own skill discovery
+   * depth, so this library never grows layouts the harness cannot see. */
   async list(): Promise<SkillSummary[]> {
     const root = resolve(this.options.root)
     const out: SkillSummary[] = []
@@ -142,15 +143,6 @@ export class CuratorSkillStore {
       const dir = join(root, entry.name)
       if (!(await isDir(dir, entry))) continue
       await scan(dir, entry.name)
-      // Category nesting: <root>/<category>/<name>/SKILL.md
-      let nested
-      try {
-        nested = await readdir(dir, { withFileTypes: true })
-      } catch { continue }
-      for (const sub of nested) {
-        const subDir = join(dir, sub.name)
-        if (await isDir(subDir, sub)) await scan(subDir, sub.name)
-      }
     }
     return out.sort((a, b) => a.name.localeCompare(b.name))
   }
@@ -239,6 +231,23 @@ export class CuratorSkillStore {
       await this.locked(dir, async () => {
         await this.requireCuratorManaged(dir, name)
         await rm(dir, { recursive: true, force: true })
+      })
+    })
+  }
+
+  /**
+   * Jurisdiction transfer (`/memory adopt`): mark a user-owned skill
+   * curator-managed. Deliberately NOT behind the provenance gate — the
+   * operator themselves is moving the boundary, and the gate exists to stop
+   * the autonomous fork, not the user.
+   */
+  async adopt(name: string): Promise<void> {
+    const dir = this.skillDir(name)
+    return this.enqueue(async () => {
+      await this.locked(dir, async () => {
+        const text = await this.readSkillFile(dir)
+        if (isCuratorManaged(text)) throw new Error(`skill "${name}" is already curator-managed`)
+        await writeFileAtomic(join(dir, 'SKILL.md'), adoptSkillText(text), { mode: 0o600, dirMode: 0o700 })
       })
     })
   }

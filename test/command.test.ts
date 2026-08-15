@@ -72,9 +72,42 @@ describe('installMemoryCommand', () => {
     expect(registered).toHaveLength(1)
     expect(registered[0].name).toBe('memory')
     expect(typeof registered[0].description).toBe('string')
+    // Without `input`, the web composer only claims bare `/memory` — argued
+    // lines like `/memory curator` fall through to the model as chat text.
+    expect(typeof registered[0].input?.hint).toBe('string')
     const result = await registered[0].handler({})
     expect(result.kind).toBe('success')
     expect(result.text).toContain('- learned in session')
     expect(result.text).toContain('USER.md')
+  })
+
+  it('routes the curator subcommands to their extras', async () => {
+    const { ctx, registered } = commandCtx()
+    const seen: string[] = []
+    installMemoryCommand(ctx, store, {
+      curatorRun: async () => { seen.push('run'); return 'ran' },
+      curatorStatus: async () => { seen.push('status'); return 'status text' },
+      pinSkill: async (name, pinned) => { seen.push(`pin:${name}:${pinned}`); return 'pin done' },
+      adoptSkill: async (name) => { seen.push(`adopt:${name}`); return 'adopted' },
+    })
+    const handler = registered[0].handler
+    expect((await handler({ rawInput: 'curator' })).text).toBe('ran')
+    expect((await handler({ rawInput: 'curator status' })).text).toBe('status text')
+    expect((await handler({ rawInput: 'pin my-skill' })).text).toBe('pin done')
+    expect((await handler({ rawInput: 'unpin my-skill' })).text).toBe('pin done')
+    expect((await handler({ rawInput: 'adopt their-skill' })).text).toBe('adopted')
+    expect(seen).toEqual(['run', 'status', 'pin:my-skill:true', 'pin:my-skill:false', 'adopt:their-skill'])
+  })
+
+  it('answers not-wired and usage for missing extras and bare names', async () => {
+    const { ctx, registered } = commandCtx()
+    installMemoryCommand(ctx, store, {
+      pinSkill: async () => 'never',
+    })
+    const handler = registered[0].handler
+    expect((await handler({ rawInput: 'curator' })).text).toContain('not wired')
+    expect((await handler({ rawInput: 'adopt x' })).text).toContain('not wired')
+    expect((await handler({ rawInput: 'pin  ' })).text).toContain('Usage')
+    expect((await handler({ rawInput: 'unknown-subcommand' })).text).toContain('/memory curator')
   })
 })

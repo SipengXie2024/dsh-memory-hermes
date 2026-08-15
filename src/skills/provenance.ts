@@ -57,3 +57,23 @@ export function renderSkillFile(meta: { name: string; description: string; creat
 export function isCuratorManaged(skillFileText: string): boolean {
   return parseFrontmatter(skillFileText).meta.createdBy === CURATOR_MARKER
 }
+
+/**
+ * Jurisdiction transfer, text-level: set `created_by: agent` while leaving
+ * every other frontmatter line byte-identical — hand-written skills may
+ * carry keys this module does not model (e.g. disable-model-invocation),
+ * and a re-render through renderSkillFile would silently drop them.
+ */
+export function adoptSkillText(text: string): string {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(text)
+  if (match === null) {
+    return `---\ncreated_by: ${CURATOR_MARKER}\n---\n${text}`
+  }
+  const lines = match[1]!.split(/\r?\n/)
+  const markerLine = `created_by: ${CURATOR_MARKER}`
+  const hadMarker = lines.some(line => /^created_by\s*:/.test(line))
+  const nextLines = hadMarker
+    ? lines.map(line => (/^created_by\s*:/.test(line) ? markerLine : line))
+    : [...lines, markerLine]
+  return `---\n${nextLines.join('\n')}\n---\n${text.slice(match[0].length)}`
+}

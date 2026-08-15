@@ -82,6 +82,17 @@ memory-hermes:
     # skillRoot: C:/Users/<你>/.dsh/skills  # skill 库根;默认就是 dsh 用户 skill 根
     # reviewProvider: deepseek   # review/compact 换模型用;默认跟主会话(吃前缀缓存)
     # reviewModel: deepseek-chat
+    curatorEnabled: true         # v4:库维护层总开关(遥测+标记+调度+LLM pass)
+    curatorConsolidate: true     # LLM 归并 pass(有意与 Hermes 默认相反:开)
+    curatorIntervalHours: 168    # 两次 curator run 的最小间隔(Hermes 7 天)
+    curatorMinIdleHours: 2       # 触发前要求的用户空闲时长
+    curatorStaleAfterDays: 30    # stale 标记窗口(never-used 宽限同窗)
+    curatorMaxSteps: 16          # curator fork 循环的最大 LLM 步数
+    curatorMaxTokens: 4000       # 单步输出 token 预算
+    curatorTimeoutMs: 300000     # 整个 curator run 的超时(毫秒)
+    curatorMaxBackups: 5         # run 前快照保留份数(轮替删最老)
+    # curatorProvider: deepseek  # curator 换模型用;缺省回落 reviewProvider/Model,再回落会话默认模型
+    # curatorModel: deepseek-chat
 ```
 
 注意:id 覆盖是**整体替换 config,不深合并**——要改就把想要的字段写全(未写的字段回 schema 默认,恰好也是安全的)。
@@ -116,16 +127,32 @@ v2 及以前,review 把所有类别(技术经验、环境事实、用户偏好)�
 - 与 Hermes 的三处有意偏差:provenance 标记存 frontmatter 而非遥测台账(规避记录缺失竞态);skill 工具只在 fork 循环内注册(前台创建 skill 用普通文件工具,产物无标记即受保护);不移植 skill_usage 使用遥测。
 - 注意:skill 建的勤不勤取决于模型对指令的遵守度(Hermes 原文同款提示词;"Be ACTIVE");库全是 user-owned 时弱模型可能保守地说"Nothing to save"——`/memory review <focus>` 可以点名让它建。
 
+## 库维护(curator,v4)
+
+skill 库只进不出会退化成一堆一次性窄条目。v4 移植 Hermes 的第二层维护(`agent/curator.py` 的 curator run):与 turn 级 review 独立的周期性**库自身**审查。五件事:
+
+1. **使用遥测**:前台每次真实使用 skill(dsh 原生 `skill` 工具成功加载,或 `/名字` 手动调用)在 sidecar 的 `skill_usage` 表记一笔(次数、时刻)。fork 内部的巡库读取**不**计数——维护性读取计入会把所有 skill 刷成 active,致盲 stale 检测。
+2. **确定性 stale 标记**(零破坏):每次 curator run 先重算生命周期状态——用过但超过 `curatorStaleAfterDays` 没再用 → 标 `stale`;从没用过的给一个同窗宽限(「无使用是证据缺失,不是过时证据」);pinned 一律豁免;再次被用即回 `active`。标记只是给 LLM pass 的证据输入,自己不动任何文件。
+3. **LLM 归并 pass**(`curatorConsolidate`,默认开):后台 fork(Hermes CURATOR_REVIEW_PROMPT 平移)对着全库清单做 umbrella 化——前缀簇归并成带小节的类级 skill、窄条目降级成 `references/` 支持文件、确认废弃的删除。硬规则:只动 `created_by: agent` 的;pinned 禁碰;删除前必须本 run 内 `skill_view` 过(read-before-write 闸强制);umbrella 必须建在库根层(dsh 只发现深度 1)。
+4. **run 前快照**:每次将要有损的 run 前,把全部 curator-managed skill 目录 + 遥测表复制到 `$DSH_HOME/skill-backups/<时间戳>/`,保留 `curatorMaxBackups` 份轮替。**恢复是手工的**:把 `<时间戳>/<名字>/` 拷回 `$DSH_HOME/skills/` 即可;**不要**贴回旧遥测——旧的 lastUsedAt 会让它立刻再被标 stale,让下个 run 重新 seed(宽限重启)才对。
+5. **调度**:常驻 server 没有「agent 空闲」原语,用近似——每小时探一次,`用户空闲 ≥ curatorMinIdleHours` 且 `距上次 run ≥ curatorIntervalHours` 才触发;活跃度只认真实用户动作(用户消息、turn 结束),标题补写等后台事件不算。首次装载只锚定周期不立刻跑;重启后至少等满一个空闲窗。同一时刻只允许一个 run(手动/调度撞车,后到者拒绝)。
+
+与 Hermes 的两处**有意偏离**:归并 pass 默认**开**(Hermes 默认关——我们的定位是无人审查的自动库,靠快照+read-before-write 兜底而非人审);**无 archive 层**,delete 就是真删(Hermes 的 `.archive/` 90 天档在无人审查前提下是死重)。
+
 ## 设置页与 /memory 命令
 
 - **设置页**:dsh web 设置导航里的「记忆」页(settings.section 注册),三个页签:
   - **文件**:MEMORY.md / USER.md 两区,各带用量条与条目列表;条目可内联编辑、两击确认删除、输入框新增。面板编辑**不走审批闸、不受扫描拒写**(操作者就是审批人);会被扫描命中的条目带三角警示标记,仅提示不拦截。
-  - **技能**:后台 review 沉淀的 curator skill 一览(只显示 `created_by: agent` 的;你手写的 skill 不属于这里)。
-  - **活动**:后台 review 记录列表。每条一行摘要(时间、类型、人话结论:存了几条/动了哪些 skill/没有新内容)+ 人性化时长;失败行只显示清理后的错误单行(嵌套 JSON 已解开);逐步工具调用 trace 收在「过程(N 步)」折叠里,Refresh 拉取。
+  - **技能**:后台 review 沉淀的 curator skill 一览(只显示 `created_by: agent` 的;你手写的 skill 不属于这里),v4 起每行带遥测:用过几次/最近何时、沉寂(stale)标记、置顶(pinned)标记。
+  - **活动**:后台 review 与 curator 记录列表(curator run 显示为「库维护」)。每条一行摘要(时间、类型、人话结论:存了几条/动了哪些 skill/没有新内容)+ 人性化时长;失败行只显示清理后的错误单行(嵌套 JSON 已解开);逐步工具调用 trace 收在「过程(N 步)」折叠里,Refresh 拉取。
 - **`/memory`**:输出两文件用量头与条目全文(任意端)。
 - **`/memory review [focus]`**:立刻对当前会话跑一次后台 review(绕过触发策略,记为 manual);focus 文本会追加进 review 指令(对齐 Hermes 的 /refine 聚焦语义),如 `/memory review 把刚才的调试过程存成 skill`。
-- **`/memory skills`**:列出 skill 库(名称 + 描述 + user-owned 标记)。
+- **`/memory skills`**:列出 skill 库(名称 + 描述 + user-owned 标记 + 遥测列 `[use=N state=… pinned]`)。
 - **`/memory compact`**:一次 LLM 调用产出合并方案,经 dsh 审批服务**人审**通过后整体重写两文件(store.rewrite,同锁内原子写路径);无审批渠道时只展示方案不落盘。
+- **`/memory curator`**:立刻跑一次库维护 pass(绕过 idle/interval 门,与调度触发互斥);回复里带 sweep 结果、动作计数、快照位置。
+- **`/memory curator status`**:上次 run/下次预计/最近用户活跃/库形状(curator-managed、stale、pinned、user-owned 各几个)。
+- **`/memory pin <名字>` / `/memory unpin <名字>`**:置顶豁免——pinned 的 skill 跳过 stale 标记、LLM pass 硬规则禁碰。
+- **`/memory adopt <名字>`**:把你手写的 skill 移交给 curator 管(frontmatter 补 `created_by: agent`,其余键原样保留)——移交后它进入自动归并/删除的管辖范围。
 - profile 没装 commands 插件时命令静默不注册。
 
 ## preset 交互与 tools.restrict
@@ -148,8 +175,10 @@ ctx.tools.restrict({ deny: ['memory'] })
 ## 数据与卸载
 
 - 记忆数据:`$DSH_HOME/memory/MEMORY.md` 与 `USER.md`。纯文本,每行一条 `- ` 前缀,可手工检查/编辑;手改在**下个 session** 生效。
-- review 记录:storage-domain sidecar(`memory_hermes` 域,后端介质由 storage 层决定)。
-- 卸载:`dsh plugin --profile web remove dsh-memory-hermes`。数据文件不会被删,不要了手工删 `$DSH_HOME/memory/`。
+- skill 库:`$DSH_HOME/skills/`(dsh 自带用户根,与手写 skill 混居,靠 `created_by: agent` 区分管辖)。
+- curator 快照:`$DSH_HOME/skill-backups/<时间戳>/`(每次有损 run 前自动留,轮替保 `curatorMaxBackups` 份)。
+- review / curator 记录与使用遥测:storage-domain sidecar(`memory_hermes` 域,后端介质由 storage 层决定)。
+- 卸载:`dsh plugin --profile web remove dsh-memory-hermes`。数据文件不会被删,不要了手工删 `$DSH_HOME/memory/`、`$DSH_HOME/skill-backups/`;`$DSH_HOME/skills/` 里的 skill 是通用资产,留不留看你。
 
 ## 已知边界(设计取舍,非 bug)
 

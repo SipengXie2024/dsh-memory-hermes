@@ -59,6 +59,11 @@ export interface PanelSkill {
   readonly name: string
   readonly description: string
   readonly curatorManaged: boolean
+  /** Telemetry columns (absent when no usage row exists yet). */
+  readonly useCount?: number
+  readonly lastUsedAt?: number
+  readonly state?: 'active' | 'stale'
+  readonly pinned?: boolean
 }
 
 export interface PanelSkillsResult {
@@ -67,7 +72,12 @@ export interface PanelSkillsResult {
 
 /** Structural view of the skill store's list seam. */
 export interface SkillListSource {
-  list(): Promise<readonly PanelSkill[]>
+  list(): Promise<readonly { name: string; description: string; curatorManaged: boolean }[]>
+}
+
+/** Structural view of the telemetry read seam. */
+export interface SkillUsageSource {
+  get(name: string): { useCount: number; lastUsedAt?: number; state: 'active' | 'stale'; pinned: boolean } | undefined
 }
 
 export class MemoryHermesGateway extends TypertRemoteService {
@@ -76,6 +86,7 @@ export class MemoryHermesGateway extends TypertRemoteService {
     private readonly store: MemoryStore,
     private readonly reviewRuns: () => Promise<readonly ReviewRun[]> | readonly ReviewRun[] = () => [],
     private readonly skillStore?: SkillListSource,
+    private readonly skillUsage?: SkillUsageSource,
   ) {
     super(ctx, GATEWAY_NAMESPACE)
   }
@@ -120,6 +131,21 @@ export class MemoryHermesGateway extends TypertRemoteService {
     // The panel shows the curator's own work only; user-owned skills live
     // in other systems' UIs.
     const skills = (await this.skillStore.list()).filter(skill => skill.curatorManaged)
-    return { skills: skills.map(skill => ({ name: skill.name, description: skill.description, curatorManaged: skill.curatorManaged })) }
+    return {
+      skills: skills.map((skill): PanelSkill => {
+        const usage = this.skillUsage?.get(skill.name)
+        return {
+          name: skill.name,
+          description: skill.description,
+          curatorManaged: skill.curatorManaged,
+          ...usage === undefined ? {} : {
+            useCount: usage.useCount,
+            ...usage.lastUsedAt === undefined ? {} : { lastUsedAt: usage.lastUsedAt },
+            state: usage.state,
+            pinned: usage.pinned,
+          },
+        }
+      }),
+    }
   }
 }

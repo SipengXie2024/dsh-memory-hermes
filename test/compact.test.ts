@@ -44,6 +44,15 @@ const DEFAULTS: Resolved = {
   skillReview: true,
   reviewMaxSteps: 8,
   skillMaxBytes: 65536,
+  curatorEnabled: true,
+  curatorConsolidate: true,
+  curatorIntervalHours: 168,
+  curatorMinIdleHours: 2,
+  curatorStaleAfterDays: 30,
+  curatorMaxSteps: 16,
+  curatorMaxTokens: 4000,
+  curatorTimeoutMs: 300_000,
+  curatorMaxBackups: 5,
 }
 
 const REPLY = '## MEMORY.md\n- uses pnpm\n- prefers Chinese docs\n\n## USER.md\n- speaks Chinese\n'

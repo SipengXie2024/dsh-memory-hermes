@@ -34,17 +34,34 @@ export interface MemoryCommandExtras {
   readonly triggerReview?: (agent: Agent, focus?: string) => void
   readonly runCompact?: (agent: Agent, signal: AbortSignal) => Promise<string>
   readonly listSkills?: () => Promise<readonly string[]>
+  /** `/memory curator` — run the library-maintenance pass now. */
+  readonly curatorRun?: () => Promise<string>
+  /** `/memory curator status` — scheduling and library shape. */
+  readonly curatorStatus?: () => Promise<string>
+  /** `/memory pin|unpin <name>` — flip the curation exemption. */
+  readonly pinSkill?: (name: string, pinned: boolean) => Promise<string>
+  /** `/memory adopt <name>` — transfer a user-owned skill to the curator. */
+  readonly adoptSkill?: (name: string) => Promise<string>
 }
 
 const USAGE = 'Usage: /memory — show the memory files; /memory review [focus] — run a background '
-  + 'review now; /memory compact — propose a human-reviewed consolidation; /memory skills — list the skill library.'
+  + 'review now; /memory compact — propose a human-reviewed consolidation; /memory skills — list the skill library; '
+  + '/memory curator [status] — run the library-maintenance pass now / show its schedule; '
+  + '/memory pin <name>, /memory unpin <name> — exempt a skill from automatic curation; '
+  + '/memory adopt <name> — put a user-owned skill under curator management.'
+
+const NOT_WIRED = 'The curator is not wired in this profile.'
 
 /** Register /memory when the commands service is available. */
 export function installMemoryCommand(ctx: Context, store: MemoryStore, extras: MemoryCommandExtras = {}): void {
   ctx.inject(['commands'], (scoped) => {
     scoped.commands.register({
       name: 'memory',
-      description: 'Show the persistent memory files; /memory review [focus], /memory compact, /memory skills for upkeep',
+      description: 'Show the persistent memory files; review/compact/skills/curator/pin/adopt for upkeep',
+      // Without an input declaration the web composer only claims bare
+      // `/memory`; argued lines (e.g. `/memory curator`) fall through to the
+      // model as plain chat text (ui-commands matchEnter decision table).
+      input: { hint: '[review [focus] | compact | skills | curator [status] | pin|unpin|adopt <name>]' },
       handler: async (invocation) => {
         const input = (invocation.rawInput ?? '').trim()
         if (input === '') {
@@ -70,6 +87,27 @@ export function installMemoryCommand(ctx: Context, store: MemoryStore, extras: M
           }
           const lines = await extras.listSkills()
           return { kind: 'success' as const, text: lines.length === 0 ? '(skill library is empty)' : lines.join('\n') }
+        }
+        if (input === 'curator status') {
+          if (extras.curatorStatus === undefined) return { kind: 'success' as const, text: NOT_WIRED }
+          return { kind: 'success' as const, text: await extras.curatorStatus() }
+        }
+        if (input === 'curator') {
+          if (extras.curatorRun === undefined) return { kind: 'success' as const, text: NOT_WIRED }
+          return { kind: 'success' as const, text: await extras.curatorRun() }
+        }
+        if (input.startsWith('pin ') || input.startsWith('unpin ')) {
+          if (extras.pinSkill === undefined) return { kind: 'success' as const, text: NOT_WIRED }
+          const pinned = input.startsWith('pin ')
+          const skillName = input.slice(pinned ? 'pin '.length : 'unpin '.length).trim()
+          if (skillName === '') return { kind: 'success' as const, text: USAGE }
+          return { kind: 'success' as const, text: await extras.pinSkill(skillName, pinned) }
+        }
+        if (input.startsWith('adopt ')) {
+          if (extras.adoptSkill === undefined) return { kind: 'success' as const, text: NOT_WIRED }
+          const skillName = input.slice('adopt '.length).trim()
+          if (skillName === '') return { kind: 'success' as const, text: USAGE }
+          return { kind: 'success' as const, text: await extras.adoptSkill(skillName) }
         }
         return { kind: 'success' as const, text: USAGE }
       },

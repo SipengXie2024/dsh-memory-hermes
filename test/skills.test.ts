@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { isCuratorManaged, parseFrontmatter, renderSkillFile } from '../src/skills/provenance.js'
+import { adoptSkillText, isCuratorManaged, parseFrontmatter, renderSkillFile } from '../src/skills/provenance.js'
 import { CuratorSkillStore } from '../src/skills/store.js'
 import { ForkSkillTools } from '../src/skills/tools.js'
 
@@ -33,6 +33,22 @@ describe('provenance', () => {
     expect(isCuratorManaged('# plain markdown\n')).toBe(false)
     expect(isCuratorManaged(renderSkillFile({ name: 'x', description: 'y' }, 'body'))).toBe(false)
     expect(isCuratorManaged('---\ncreated_by: user\n---\nbody')).toBe(false)
+  })
+
+  it('adoptSkillText adds the marker without touching foreign frontmatter keys', () => {
+    const original = '---\nname: mine\ndescription: hand made\ndisable-model-invocation: true\n---\n# Body\n'
+    const adopted = adoptSkillText(original)
+    expect(isCuratorManaged(adopted)).toBe(true)
+    expect(adopted).toContain('disable-model-invocation: true')
+    expect(adopted).toContain('# Body')
+    // An existing created_by is overwritten, not duplicated.
+    const reAdopted = adoptSkillText('---\nname: x\ncreated_by: user\n---\nbody')
+    expect(isCuratorManaged(reAdopted)).toBe(true)
+    expect(reAdopted.match(/created_by/g)).toHaveLength(1)
+    // A bare markdown file gets a minimal frontmatter block.
+    const bare = adoptSkillText('# just markdown\n')
+    expect(isCuratorManaged(bare)).toBe(true)
+    expect(bare).toContain('# just markdown')
   })
 })
 
@@ -65,12 +81,12 @@ describe('CuratorSkillStore.list', () => {
     expect(list.find(skill => skill.name === 'user-skill')?.curatorManaged).toBe(false)
   })
 
-  it('discovers category-nested skills one level deep', async () => {
+  it('ignores skills nested below depth 1 (dsh discovery depth)', async () => {
     const nested = join(dir, 'skills', 'category', 'nested-skill')
     mkdirSync(nested, { recursive: true })
     writeFileSync(join(nested, 'SKILL.md'), '---\nname: nested-skill\ndescription: nested\n---\n')
     const list = await store.list()
-    expect(list.map(skill => skill.name)).toContain('nested-skill')
+    expect(list.map(skill => skill.name)).not.toContain('nested-skill')
   })
 
   it('follows junction/symlink skill dirs (users link skills in)', async () => {
@@ -131,6 +147,55 @@ describe('CuratorSkillStore mutations', () => {
     writeFileSync(join(userDir, 'SKILL.md'), '# hand written, no marker\n')
     await expect(store.delete('protected-skill')).rejects.toThrow(/not curator-managed/)
     await expect(store.patch('protected-skill', undefined, 'hand', 'x')).rejects.toThrow(/not curator-managed/)
+  })
+
+  it('adopt transfers a user-owned skill and unlocks mutations', async () => {
+    const userDir = join(dir, 'skills', 'handover')
+    mkdirSync(userDir, { recursive: true })
+    writeFileSync(join(userDir, 'SKILL.md'), '---\nname: handover\ndescription: was mine\n---\n# body\n')
+    await store.adopt('handover')
+    expect(skillFile('handover')).toContain('created_by: agent')
+    expect(skillFile('handover')).toContain('description: was mine')
+    await store.edit('handover', '# curator can now edit\n')
+    expect(skillFile('handover')).toContain('# curator can now edit')
+    // Idempotence guard: adopting twice is an explicit error, not a rewrite.
+    await expect(store.adopt('handover')).rejects.toThrow(/already curator-managed/)
+    await expect(store.adopt('never-existed')).rejects.toThrow(/not found/)
+  })
+})
+
+describe('ForkSkillTools mutation hooks', () => {
+  it('fires onCreate/onDelete after the store operation succeeded, not on refusals', async () => {
+    const created: string[] = []
+    const deleted: string[] = []
+    const tools = new ForkSkillTools(store, {
+      onCreate: (name) => { created.push(name) },
+      onDelete: (name) => { deleted.push(name) },
+    })
+    await tools.execute('skill_manage', JSON.stringify({ action: 'create', name: 'hooked', description: 'd', content: '# b\n' }))
+    expect(created).toEqual(['hooked'])
+    // Refused delete (read-before-write) must not fire the hook.
+    const refused = await tools.execute('skill_manage', JSON.stringify({ action: 'delete', name: 'hooked' }))
+    expect(refused.isError).toBe(true)
+    expect(deleted).toEqual([])
+    await tools.execute('skill_view', JSON.stringify({ name: 'hooked' }))
+    await tools.execute('skill_manage', JSON.stringify({ action: 'delete', name: 'hooked' }))
+    expect(deleted).toEqual(['hooked'])
+  })
+
+  it('remove_file fires neither hook (the skill itself remains)', async () => {
+    const created: string[] = []
+    const deleted: string[] = []
+    const tools = new ForkSkillTools(store, {
+      onCreate: (name) => { created.push(name) },
+      onDelete: (name) => { deleted.push(name) },
+    })
+    await tools.execute('skill_manage', JSON.stringify({ action: 'create', name: 'files', description: 'd', content: '# b\n' }))
+    await tools.execute('skill_view', JSON.stringify({ name: 'files' }))
+    await tools.execute('skill_manage', JSON.stringify({ action: 'write_file', name: 'files', file_path: 'references/a.md', content: 'x' }))
+    await tools.execute('skill_manage', JSON.stringify({ action: 'remove_file', name: 'files', file_path: 'references/a.md' }))
+    expect(created).toEqual(['files'])
+    expect(deleted).toEqual([])
   })
 })
 

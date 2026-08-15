@@ -24,16 +24,18 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { BlockAssembler, createToolResultMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { CallId, ContentBlock, GenerateOptions, Message } from '@deepseek-ai/dsh-llm'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { GenerateOptions, Message } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import { usageHeader } from './errors.js'
+import { runForkLoop, summarize } from './forkloop.js'
+import type { ToolCallBlock } from './forkloop.js'
 import type { ReviewKind, ReviewLog, ReviewRun } from './reviewlog.js'
 import { scan } from './scan.js'
 import type { ConfigSource } from './settings.js'
 import { ForkSkillTools, SKILL_TOOL_NAMES, forkSkillToolSchemas } from './skills/tools.js'
 import type { CuratorSkillStore } from './skills/store.js'
-import type { SkillActionCounts } from './skills/tools.js'
+import type { SkillActionCounts, SkillMutationHooks } from './skills/tools.js'
 import type { MemoryStore } from './store.js'
 import { TOOL_NAME, validateMemoryArgs, writtenText } from './tool.js'
 
@@ -171,6 +173,8 @@ export interface ReviewDeps {
   readonly tokenMeter?: TokenMeterLike
   /** Present when the skill route is available (skillReview config on). */
   readonly skillStore?: CuratorSkillStore
+  /** Telemetry callbacks hung on the fork's create/delete actions. */
+  readonly skillHooks?: SkillMutationHooks
 }
 
 /** Merge an upstream signal with a timeout; <=0 disables the timer. */
@@ -205,10 +209,6 @@ export interface ReviewCall {
   readonly instruction?: string
   /** User steering appended to the instruction (`/memory review [focus]`). */
   readonly focus?: string
-}
-
-function summarize(text: string): string {
-  return [...text].length <= 80 ? text : `${[...text].slice(0, 80).join('')}...`
 }
 
 /** Text content of one message, for the digest. */
@@ -264,12 +264,6 @@ export function digestHistory(messages: readonly Message[], tail = 24): Message[
   return [digest, ...keep]
 }
 
-interface ToolCallBlock {
-  readonly id: string
-  readonly name: string
-  readonly arguments: string
-}
-
 /**
  * One review pass: a bounded fork loop. Each step streams the model; tool
  * calls are dispatched (memory pipeline, skill tools, or a foreign-call
@@ -310,20 +304,13 @@ export async function reviewOnce(
     ...(skillEnabled ? forkSkillToolSchemas() : []),
   ] as unknown as NonNullable<GenerateOptions['tools']>
   const merged = deadline(call.signal, config.reviewTimeoutMs * Math.max(1, config.reviewMaxSteps))
-  const forkTools = skillEnabled && deps.skillStore !== undefined ? new ForkSkillTools(deps.skillStore) : undefined
+  const forkTools = skillEnabled && deps.skillStore !== undefined ? new ForkSkillTools(deps.skillStore, deps.skillHooks) : undefined
 
   let applied = 0
   let rejected = 0
   let malformed = 0
   let foreign = 0
   const entries: string[] = []
-  const trace: string[] = []
-  let steps = 0
-
-  /** One bounded trace line per dispatched tool call. */
-  const note = (line: string): void => {
-    if (trace.length < 24) trace.push([...line].length <= 140 ? line : `${[...line].slice(0, 140).join('')}...`)
-  }
 
   const dispatchMemory = async (toolCall: ToolCallBlock): Promise<{ text: string; isError: boolean }> => {
     let args: Parameters<typeof validateMemoryArgs>[0]
@@ -355,55 +342,25 @@ export async function reviewOnce(
     }
   }
 
-  while (true) {
-    if (steps >= Math.max(1, config.reviewMaxSteps)) break
-    steps += 1
-    const options: GenerateOptions = {
-      provider,
-      model,
-      messages,
-      ...header.system === undefined ? {} : { system: header.system },
-      tools,
-      maxTokens: config.reviewMaxTokens,
-      sessionId: call.session.id,
-      signal: merged,
-    }
-    const assembler = new BlockAssembler()
-    for await (const chunk of ctx.llm.stream(options)) {
-      merged.throwIfAborted()
-      assembler.push(chunk)
-    }
-    const finish = assembler.finish
-    if (finish.kind === 'aborted' || finish.kind === 'error') {
-      const detail = `: ${JSON.stringify(finish.failure)}`
-      throw new Error(`review call did not finish cleanly (${finish.kind})${detail}`)
-    }
-    const toolCalls: ToolCallBlock[] = assembler.blocks()
-      .filter((block): block is ContentBlock & { type: 'tool-call' } => block.type === 'tool-call')
-      .map(block => ({ id: block.id, name: block.name, arguments: block.arguments }))
-    if (toolCalls.length === 0) break
-    // Providers require tool_result blocks to follow the assistant message
-    // that issued the tool_use — append the assembled assistant message
-    // before the results (400 "tool_call_id is not found" otherwise).
-    messages.push(assembler.message({ kind: 'model', provider, model }))
-    for (const toolCall of toolCalls) {
-      let result: { text: string; isError: boolean }
-      if (toolCall.name === TOOL_NAME) {
-        result = await dispatchMemory(toolCall)
-      } else if (forkTools !== undefined && (SKILL_TOOL_NAMES as readonly string[]).includes(toolCall.name)) {
-        result = await forkTools.execute(toolCall.name, toolCall.arguments)
-      } else {
-        foreign += 1
-        result = { text: `tool "${toolCall.name}" is not available in a background review`, isError: true }
+  const loop = await runForkLoop(ctx, {
+    provider,
+    model,
+    messages,
+    ...header.system === undefined ? {} : { system: header.system },
+    tools,
+    maxSteps: config.reviewMaxSteps,
+    maxTokens: config.reviewMaxTokens,
+    signal: merged,
+    sessionId: call.session.id,
+    dispatch: async (toolCall) => {
+      if (toolCall.name === TOOL_NAME) return dispatchMemory(toolCall)
+      if (forkTools !== undefined && (SKILL_TOOL_NAMES as readonly string[]).includes(toolCall.name)) {
+        return forkTools.execute(toolCall.name, toolCall.arguments)
       }
-      note(`s${steps} ${toolCall.name}(${summarize(toolCall.arguments)}) -> ${result.isError ? 'ERR' : 'ok'}: ${result.text.split('\n')[0]}`)
-      messages.push(createToolResultMessage({
-        callId: toolCall.id as CallId,
-        content: [{ type: 'text', text: result.text }],
-        isError: result.isError,
-      }))
-    }
-  }
+      foreign += 1
+      return { text: `tool "${toolCall.name}" is not available in a background review`, isError: true }
+    },
+  })
 
   return {
     applied,
@@ -411,9 +368,9 @@ export async function reviewOnce(
     malformed,
     foreign,
     entries,
-    steps,
+    steps: loop.steps,
     ...forkTools === undefined ? {} : { skillActions: forkTools.counts },
-    ...trace.length === 0 ? {} : { trace },
+    ...loop.trace.length === 0 ? {} : { trace: loop.trace },
   }
 }
 
