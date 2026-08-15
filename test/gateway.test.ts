@@ -28,10 +28,10 @@ afterEach(() => {
 })
 
 describe('MemoryHermesGateway wiring', () => {
-  it('binds the wire namespace and marks list/mutate as Remote methods', () => {
+  it('binds the wire namespace and marks list/mutate/listReviewRuns as Remote methods', () => {
     expect(gateway.typertRemote.namespace).toBe(GATEWAY_NAMESPACE)
     const markers = remoteMethods(gateway)
-    expect(markers.map(marker => marker.method).sort()).toEqual(['list', 'mutate'])
+    expect(markers.map(marker => marker.method).sort()).toEqual(['list', 'listReviewRuns', 'mutate'])
   })
 })
 

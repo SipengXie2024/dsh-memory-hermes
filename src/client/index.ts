@@ -10,9 +10,9 @@ import { createElement } from 'react'
 import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
 import type {} from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
-import type { PanelListResult, PanelMutateOutcome } from '../gateway.js'
+import type { PanelListResult, PanelMutateOutcome, PanelReviewRunsResult } from '../gateway.js'
 import type { MemoryToolArgs } from '../tool.js'
-import { LIST_CALL, mutateCall, unwrapRpc } from './logic.js'
+import { LIST_CALL, LIST_REVIEW_RUNS_CALL, mutateCall, unwrapRpc } from './logic.js'
 import { MemoryPanel } from './MemoryPanel.js'
 import type { MemoryPanelFace } from './MemoryPanel.js'
 
@@ -31,6 +31,10 @@ export function apply(ctx: Context): void {
       const call = mutateCall(op)
       return unwrapRpc<PanelMutateOutcome>(await connection.rpc.call(call.channel, call.endpoint, call.payload))
     },
+    listReviewRuns: async () =>
+      unwrapRpc<PanelReviewRunsResult>(
+        await connection.rpc.call(LIST_REVIEW_RUNS_CALL.channel, LIST_REVIEW_RUNS_CALL.endpoint, LIST_REVIEW_RUNS_CALL.payload),
+      ),
   }
   // One settings page per list entry. The owner hands sections only
   // { close }, which this panel never uses — the thunk closes over the face

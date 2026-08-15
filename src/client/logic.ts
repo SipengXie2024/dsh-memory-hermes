@@ -20,6 +20,13 @@ export const LIST_CALL = {
   payload: { args: {} },
 } as const
 
+/** Call shape for MemoryHermesGateway.listReviewRuns (no parameters). */
+export const LIST_REVIEW_RUNS_CALL = {
+  channel: RPC_CHANNEL,
+  endpoint: 'memoryHermes/listReviewRuns',
+  payload: { args: {} },
+} as const
+
 /** Call shape for MemoryHermesGateway.mutate(op). */
 export function mutateCall(op: MemoryToolArgs): {
   channel: string

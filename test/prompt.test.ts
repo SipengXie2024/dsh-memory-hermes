@@ -106,14 +106,14 @@ describe('createSnapshotSection freezing', () => {
   const agentB = {} as unknown as Agent
 
   it('declares the planned section identity', () => {
-    const section = createSnapshotSection(store, true)
+    const section = createSnapshotSection(store, () => true)
     expect(section.name).toBe(SECTION_NAME)
     expect(section.order).toBe(SECTION_ORDER)
   })
 
   it('keeps the same agent frozen across steps even after writes', async () => {
     await store.mutate('memory', { action: 'add', content: 'before session' })
-    const section = createSnapshotSection(store, true)
+    const section = createSnapshotSection(store, () => true)
     const text = section.text as (context: AssembleContext) => string
 
     const first = text(context(agentA))
@@ -126,7 +126,7 @@ describe('createSnapshotSection freezing', () => {
   })
 
   it('gives a new agent (new session) the fresh content', async () => {
-    const section = createSnapshotSection(store, true)
+    const section = createSnapshotSection(store, () => true)
     const text = section.text as (context: AssembleContext) => string
 
     text(context(agentA))
@@ -136,7 +136,7 @@ describe('createSnapshotSection freezing', () => {
   })
 
   it('contributes nothing to bare assemblies without an agent', () => {
-    const section = createSnapshotSection(store, true)
+    const section = createSnapshotSection(store, () => true)
     const text = section.text as (context: AssembleContext) => string
     expect(text(context(undefined))).toBe('')
   })

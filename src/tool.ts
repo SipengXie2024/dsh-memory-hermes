@@ -1,16 +1,15 @@
 /**
  * The single Hermes-style `memory` tool: add / replace / remove over the
  * two bounded files. There is no read action — the content already sits in
- * the system prompt snapshot. Built as a factory returning defineTool
+ * the system prompt snapshot. The tool body is policy-free: the approval
+ * gate lives in a tools/pre-execute listener (policy.ts), so this file only
+ * validates, scans, and mutates. Built as a factory returning defineTool
  * options so tests can call execute() without booting a tool registry.
  */
 
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { MemoryAction, MemoryOp } from './entries.js'
 import {
-  approvalCancelledError,
-  approvalRejectedError,
-  approvalUnavailableError,
   invalidArgumentsError,
   multilineEntryError,
   scanRejectedError,
@@ -31,22 +30,10 @@ const DESCRIPTION =
   + 'consolidate the listed entries in this same turn and retry without dropping the new '
   + 'information.'
 
-/** Structural view of the optional dsh approval seam (`ctx.get('approval')`). */
-export interface ApprovalLike {
-  request(request: {
-    agent: Agent
-    toolName: string
-    callId?: string
-    reason?: string
-    signal?: AbortSignal
-  }): Promise<'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'>
-}
-
 export interface MemoryToolDeps {
   readonly store: MemoryStore
-  readonly securityScan: boolean
-  readonly approval: boolean
-  readonly getApproval: () => ApprovalLike | undefined
+  /** Live read so a settings commit toggles the scan without a restart. */
+  readonly securityScan: () => boolean
 }
 
 export interface MemoryToolArgs {
@@ -126,10 +113,6 @@ function fileLabel(file: MemoryFileKey): string {
   return file === 'user' ? 'USER.md' : 'MEMORY.md'
 }
 
-function truncate(text: string, max: number): string {
-  return [...text].length <= max ? text : `${[...text].slice(0, max).join('')}...`
-}
-
 /** The text a write introduces (undefined for remove). */
 export function writtenText(op: MemoryOp): string | undefined {
   switch (op.action) {
@@ -140,11 +123,6 @@ export function writtenText(op: MemoryOp): string | undefined {
     case 'remove':
       return undefined
   }
-}
-
-function approvalReason(call: ValidatedCall): string {
-  const subject = writtenText(call.op) ?? (call.op.action === 'remove' ? call.op.target : '')
-  return `memory ${call.op.action} in ${fileLabel(call.file)}: "${truncate(subject, 120)}"`
 }
 
 const TITLES: Readonly<Record<MemoryAction, string>> = {
@@ -203,41 +181,12 @@ export function buildMemoryTool(deps: MemoryToolDeps) {
           + `${value.entries} ${value.entries === 1 ? 'entry' : 'entries'}.`,
       }],
     },
-    async execute(args: MemoryToolArgs, exec: { agent?: Agent; callId?: string; signal?: AbortSignal }): Promise<MutateResult> {
+    async execute(args: MemoryToolArgs, _exec: { agent?: Agent; callId?: string; signal?: AbortSignal }): Promise<MutateResult> {
       const call = validateMemoryArgs(args)
       const written = writtenText(call.op)
-      if (deps.securityScan && written !== undefined) {
+      if (deps.securityScan() && written !== undefined) {
         const hit = scan(written)
         if (hit !== undefined) throw scanRejectedError(hit.ruleId)
-      }
-      if (deps.approval) {
-        // Scan runs first: never ask a human to bless content the scan rejects.
-        const approval = deps.getApproval()
-        if (approval === undefined || exec.agent === undefined) throw approvalUnavailableError()
-        let outcome: Awaited<ReturnType<ApprovalLike['request']>>
-        try {
-          outcome = await approval.request({
-            agent: exec.agent,
-            toolName: TOOL_NAME,
-            ...exec.callId === undefined ? {} : { callId: exec.callId },
-            reason: approvalReason(call),
-            ...exec.signal === undefined ? {} : { signal: exec.signal },
-          })
-        } catch {
-          // request() throws bare Errors on internal audit failures; fail
-          // closed without leaking dsh internals into the model-facing text.
-          throw approvalUnavailableError()
-        }
-        switch (outcome) {
-          case 'allowed-once':
-            break
-          case 'rejected':
-            throw approvalRejectedError()
-          case 'cancelled':
-            throw approvalCancelledError()
-          case 'unavailable':
-            throw approvalUnavailableError()
-        }
       }
       return deps.store.mutate(call.file, call.op)
     },

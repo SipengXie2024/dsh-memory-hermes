@@ -20,6 +20,11 @@ describe('plugin shape', () => {
       backgroundReview: true,
       reviewMaxTokens: 1000,
       reviewTimeoutMs: 60_000,
+      reviewTrigger: 'token-delta',
+      reviewTokenDeltaTokens: 4000,
+      compactionHarvest: true,
+      reviewHistoryLimit: 200,
+      consolidateMaxTokens: 2000,
     })
   })
 
@@ -38,10 +43,17 @@ describe('plugin shape', () => {
       reviewModel: 'cheap',
       reviewMaxTokens: 500,
       reviewTimeoutMs: 5000,
+      reviewTrigger: 'every-turn',
+      reviewTokenDeltaTokens: 8000,
+      compactionHarvest: false,
+      reviewHistoryLimit: 50,
+      consolidateMaxTokens: 3000,
     })
     expect(resolved.memoryCharLimit).toBe(4000)
     expect(resolved.approval).toBe(true)
     expect(resolved.reviewModel).toBe('cheap')
+    expect(resolved.reviewTrigger).toBe('every-turn')
+    expect(resolved.compactionHarvest).toBe(false)
   })
 })
 
@@ -54,27 +66,35 @@ describe('apply wiring', () => {
       tools: { register: vi.fn() },
       get: () => undefined,
       inject: (deps: string[]) => { injected.push(deps) },
+      on: vi.fn(),
+      logger: { warn: vi.fn(), info: vi.fn() },
       // The gateway Service registers itself through ctx.reflect.provide.
       reflect: { provide: vi.fn() },
     } as unknown as Context
     return { ctx, injected }
   }
 
-  it('installs the command and background review inside inject scopes by default', () => {
+  it('wires every optional capability through inject scopes', () => {
     const { ctx, injected } = applyCtx()
     plugin.apply(ctx, {})
-    expect(injected).toEqual([['commands'], ['llm']])
+    expect(injected).toEqual([['storageDomain'], ['llm'], ['sessionProjections'], ['commands']])
   })
 
-  it('backgroundReview: false skips the review wiring', () => {
+  it('review wiring is unconditional — policy flags are read at fire time', () => {
     const { ctx, injected } = applyCtx()
     plugin.apply(ctx, { backgroundReview: false })
-    expect(injected).toEqual([['commands']])
+    expect(injected).toEqual([['storageDomain'], ['llm'], ['sessionProjections'], ['commands']])
   })
 
-  it('approval: true disables the review even when enabled', () => {
+  it('approval: true keeps the same wiring (the gate is a pre-execute listener)', () => {
     const { ctx, injected } = applyCtx()
     plugin.apply(ctx, { approval: true, backgroundReview: true })
-    expect(injected).toEqual([['commands']])
+    expect(injected).toEqual([['storageDomain'], ['llm'], ['sessionProjections'], ['commands']])
+  })
+
+  it('installs the approval gate as a tools/pre-execute listener', () => {
+    const { ctx } = applyCtx()
+    plugin.apply(ctx, {})
+    expect(vi.mocked(ctx.on).mock.calls.map(call => call[0])).toContain('tools/pre-execute')
   })
 })

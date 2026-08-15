@@ -42,9 +42,9 @@ export interface MemoryStoreOptions {
   /**
    * Mask scan-flagged entries in error payloads, mirroring the prompt-side
    * masking — errors are the second channel through which on-disk entries
-   * reach the model.
+   * reach the model. Mutable so a live settings commit toggles it.
    */
-  readonly securityScan: boolean
+  securityScan: boolean
 }
 
 /** Result of a successful mutation, echoing live post-write usage. */
@@ -75,6 +75,45 @@ export class MemoryStore {
 
   spec(file: MemoryFileKey): MemoryFileSpec {
     return this.options.files[file]
+  }
+
+  /** Retune one file's budget live (settings watch); future mutations and
+   * snapshots observe it, frozen session prompts keep what they rendered. */
+  setLimit(file: MemoryFileKey, limit: number): void {
+    this.options.files[file].limit = limit
+  }
+
+  /** Toggle error-payload masking live (settings watch). */
+  setSecurityScan(securityScan: boolean): void {
+    this.options.securityScan = securityScan
+  }
+
+  /**
+   * Replace one file's whole entry list (the /memory compact write path).
+   * Same serialized/locked/atomic posture as mutate(); rejected when the
+   * consolidated list still exceeds the limit — a compaction that does not
+   * fit must not silently truncate.
+   */
+  async rewrite(file: MemoryFileKey, rawEntries: readonly string[]): Promise<MutateResult> {
+    const entries = rawEntries.map(entry => entry.trim().normalize('NFC')).filter(entry => entry !== '')
+    return this.enqueue(async () => {
+      const spec = this.options.files[file]
+      await mkdir(dirname(spec.path), { recursive: true, mode: 0o700 })
+      return this.locked(spec, async () => {
+        const text = serializeEntries(entries)
+        const chars = codepoints(text)
+        if (chars > spec.limit) throw overflowError(stateOf(spec, entries, this.options.securityScan), chars)
+        await writeFileAtomic(spec.path, text, { mode: 0o600, dirMode: 0o700 })
+        return {
+          file,
+          action: 'replace',
+          entries: entries.length,
+          chars,
+          limit: spec.limit,
+          percent: percentOf(chars, spec.limit),
+        }
+      })
+    })
   }
 
   /**

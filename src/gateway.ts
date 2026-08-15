@@ -1,6 +1,7 @@
 /**
  * Host half of the web memory panel: a Typert Remote service exposing
- * list / mutate over dsh's shared RPC carrier (namespace `memoryHermes`).
+ * list / mutate / listReviewRuns over dsh's shared RPC carrier (namespace
+ * `memoryHermes`).
  *
  * Panel edits skip the model-facing gates on purpose: the approval gate
  * guards model-initiated writes (the panel user IS the approver), and the
@@ -12,6 +13,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { percentOf } from './errors.js'
+import type { ReviewRun } from './reviewlog.js'
 import { scan } from './scan.js'
 import type { MemoryFileKey, MemoryStore, MutateResult } from './store.js'
 import { validateMemoryArgs } from './tool.js'
@@ -44,8 +46,20 @@ export type PanelMutateOutcome =
   | { readonly ok: true; readonly result: MutateResult }
   | { readonly ok: false; readonly message: string }
 
+/** Review-run history for the panel's activity tab. */
+export interface PanelReviewRunsResult {
+  readonly runs: readonly ReviewRun[]
+}
+
+/** One activity row (type alias so the client half imports it type-only). */
+export type PanelReviewRun = ReviewRun
+
 export class MemoryHermesGateway extends TypertRemoteService {
-  constructor(ctx: Context, private readonly store: MemoryStore) {
+  constructor(
+    ctx: Context,
+    private readonly store: MemoryStore,
+    private readonly reviewRuns: () => Promise<readonly ReviewRun[]> | readonly ReviewRun[] = () => [],
+  ) {
     super(ctx, GATEWAY_NAMESPACE)
   }
 
@@ -76,5 +90,10 @@ export class MemoryHermesGateway extends TypertRemoteService {
     } catch (error) {
       return { ok: false, message: error instanceof Error ? error.message : String(error) }
     }
+  }
+
+  @Remote('listReviewRuns')
+  async listReviewRuns(): Promise<PanelReviewRunsResult> {
+    return { runs: await this.reviewRuns() }
   }
 }

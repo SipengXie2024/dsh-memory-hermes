@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
-import type { PanelFile, PanelListResult, PanelMutateOutcome } from '../gateway.js'
+import type { PanelFile, PanelListResult, PanelMutateOutcome, PanelReviewRun, PanelReviewRunsResult } from '../gateway.js'
 import type { MemoryToolArgs } from '../tool.js'
 import { formatUsage } from './logic.js'
 
@@ -15,6 +15,7 @@ import { formatUsage } from './logic.js'
 export interface MemoryPanelFace {
   listMemory: () => Promise<PanelListResult>
   mutateMemory: (op: MemoryToolArgs) => Promise<PanelMutateOutcome>
+  listReviewRuns: () => Promise<PanelReviewRunsResult>
 }
 
 /** The thunk closes over the face; settings.section's only owner prop is
@@ -30,6 +31,21 @@ const styles = {
     flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
     minHeight: 32, boxSizing: 'border-box',
   },
+  tabRow: { display: 'flex', gap: 6, alignItems: 'center' },
+  tab: {
+    padding: '0 10px', height: 22, border: '1px solid var(--dsw-alias-border-l2)', borderRadius: 999,
+    background: 'transparent', color: 'var(--dsw-alias-label-tertiary)', font: 'inherit', fontSize: 11, cursor: 'pointer',
+  },
+  tabActive: {
+    padding: '0 10px', height: 22, border: '1px solid var(--dsw-alias-label-tertiary)', borderRadius: 999,
+    background: 'transparent', color: 'var(--dsw-alias-label-primary)', font: 'inherit', fontSize: 11, cursor: 'pointer',
+  },
+  runRow: {
+    padding: '6px 8px', borderRadius: 8, margin: '4px 0',
+    border: '1px solid var(--dsw-alias-border-l2)',
+  },
+  runMeta: { display: 'flex', flexWrap: 'wrap', gap: 8, fontSize: 11, color: 'var(--dsw-alias-label-tertiary)' },
+  runEntries: { margin: '4px 0 0', paddingLeft: 16, fontSize: 12, color: 'var(--dsw-alias-label-secondary)' },
   title: { fontSize: 13, fontWeight: 500, lineHeight: '20px', color: 'var(--dsw-alias-label-primary)' },
   body: { display: 'flex', flexDirection: 'column' },
   note: { margin: '4px 0', fontSize: 12, lineHeight: '18px', color: 'var(--dsw-alias-label-tertiary)' },
@@ -193,9 +209,48 @@ function FileSection({ file, busy, editing, confirming, onEdit, onDraft, onSave,
   )
 }
 
+const KIND_LABEL: Record<PanelReviewRun['kind'], string> = { turn: '回合', compaction: '折叠收割', manual: '手动' }
+
+function runSummary(run: PanelReviewRun): string {
+  if (run.error !== undefined) return `失败:${run.error.split('\n')[0]}`
+  if (run.applied + run.rejected + run.malformed + run.foreign === 0) return '无可存内容'
+  const parts = [`存 ${run.applied}`]
+  if (run.rejected > 0) parts.push(`弃 ${run.rejected}`)
+  if (run.malformed > 0) parts.push(`畸形 ${run.malformed}`)
+  if (run.foreign > 0) parts.push(`越界调用 ${run.foreign}`)
+  return parts.join(' · ')
+}
+
+/** Activity tab: one row per settled background review pass, newest first. */
+function ActivitySection({ runs }: { runs: readonly PanelReviewRun[] }): ReactNode {
+  if (runs.length === 0) return <p style={styles.note}>还没有 review 记录。</p>
+  return (
+    <div>
+      {runs.map(run => (
+        <div key={run.id} style={styles.runRow}>
+          <div style={styles.runMeta}>
+            <span>{new Date(run.startedAt).toLocaleString()}</span>
+            <span>{KIND_LABEL[run.kind]}</span>
+            {run.turn >= 0 && <span>turn {run.turn}</span>}
+            <span>{runSummary(run)}</span>
+            <span>{Math.max(0, run.settledAt - run.startedAt)}ms</span>
+          </div>
+          {run.entries !== undefined && run.entries.length > 0 && (
+            <ul style={styles.runEntries}>
+              {run.entries.map((entry, index) => <li key={index}>{entry}</li>)}
+            </ul>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 /** The settings page body: usage meters, entries, and edit controls. */
-export function MemoryPanel({ listMemory, mutateMemory }: MemoryPanelProps): ReactNode {
+export function MemoryPanel({ listMemory, mutateMemory, listReviewRuns }: MemoryPanelProps): ReactNode {
+  const [tab, setTab] = useState<'files' | 'activity'>('files')
   const [data, setData] = useState<PanelListResult | undefined>(undefined)
+  const [runs, setRuns] = useState<readonly PanelReviewRun[] | undefined>(undefined)
   const [loadError, setLoadError] = useState<string | undefined>(undefined)
   const [actionError, setActionError] = useState<string | undefined>(undefined)
   const [busy, setBusy] = useState(false)
@@ -206,11 +261,13 @@ export function MemoryPanel({ listMemory, mutateMemory }: MemoryPanelProps): Rea
   const refresh = useCallback(async () => {
     try {
       setLoadError(undefined)
-      setData(await listMemory())
+      const [filesResult, runsResult] = await Promise.all([listMemory(), listReviewRuns()])
+      setData(filesResult)
+      setRuns(runsResult.runs)
     } catch (error) {
       setLoadError(errorMessage(error))
     }
-  }, [listMemory])
+  }, [listMemory, listReviewRuns])
 
   useEffect(() => {
     void refresh()
@@ -236,13 +293,22 @@ export function MemoryPanel({ listMemory, mutateMemory }: MemoryPanelProps): Rea
     <div style={styles.page}>
       <header style={styles.header}>
         <span style={styles.title}>Memory</span>
-        <button type="button" style={styles.miniButton} disabled={busy} onClick={() => { void refresh() }}>Refresh</button>
+        <span style={styles.tabRow}>
+          <button type="button" style={tab === 'files' ? styles.tabActive : styles.tab} onClick={() => { setTab('files') }}>文件</button>
+          <button type="button" style={tab === 'activity' ? styles.tabActive : styles.tab} onClick={() => { setTab('activity') }}>活动</button>
+          <button type="button" style={styles.miniButton} disabled={busy} onClick={() => { void refresh() }}>Refresh</button>
+        </span>
       </header>
       <div style={styles.body}>
         {loadError !== undefined && <p style={styles.errorText}>{loadError}</p>}
         {actionError !== undefined && <p style={styles.errorText}>{actionError}</p>}
-        {data === undefined && loadError === undefined && <p style={styles.note}>Loading&hellip;</p>}
-        {data?.files.map(file => (
+        {tab === 'activity' && (
+          runs === undefined
+            ? (loadError === undefined ? <p style={styles.note}>Loading&hellip;</p> : null)
+            : <ActivitySection runs={runs} />
+        )}
+        {tab === 'files' && data === undefined && loadError === undefined && <p style={styles.note}>Loading&hellip;</p>}
+        {tab === 'files' && data?.files.map(file => (
           <FileSection
             key={file.key}
             file={file}

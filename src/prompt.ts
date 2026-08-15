@@ -88,7 +88,7 @@ export function renderSnapshot(
   ].join('\n\n')
 }
 
-export function createSnapshotSection(store: MemoryStore, securityScan: boolean): PromptSection {
+export function createSnapshotSection(store: MemoryStore, securityScan: () => boolean): PromptSection {
   const frozen = new WeakMap<Agent, string>()
   return {
     name: SECTION_NAME,
@@ -99,7 +99,9 @@ export function createSnapshotSection(store: MemoryStore, securityScan: boolean)
       if (agent === undefined) return ''
       let snapshot = frozen.get(agent)
       if (snapshot === undefined) {
-        snapshot = renderSnapshot(store.readAllSync(), securityScan)
+        // The flag is read at freeze time; a live settings change applies to
+        // the NEXT session's snapshot, not this one's frozen text.
+        snapshot = renderSnapshot(store.readAllSync(), securityScan())
         frozen.set(agent, snapshot)
       }
       return snapshot
