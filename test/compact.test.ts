@@ -41,6 +41,9 @@ const DEFAULTS: Resolved = {
   compactionHarvest: true,
   reviewHistoryLimit: 200,
   consolidateMaxTokens: 2000,
+  skillReview: true,
+  reviewMaxSteps: 8,
+  skillMaxBytes: 65536,
 }
 
 const REPLY = '## MEMORY.md\n- uses pnpm\n- prefers Chinese docs\n\n## USER.md\n- speaks Chinese\n'

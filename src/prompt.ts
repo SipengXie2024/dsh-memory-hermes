@@ -43,10 +43,12 @@ Manage them with the \`memory\` tool (add / replace / remove — no read action;
 the content is already here). Entries are terse single lines. replace and remove
 locate an entry by a unique substring.
 
-Save: durable environment facts, conventions and decisions with lasting effect,
-fixes for pitfalls you hit, explicit user preferences and constraints.
+Save: who the user is (persona, preferences, behavior expectations), durable
+environment facts and project state, conventions with lasting effect.
 Skip: secrets and credentials, one-off task state, anything trivially
 re-discoverable, speculation, bulk content (save a pointer to it instead).
+Techniques and workflow lessons do not belong here — a background review
+maintains those as skills in the skill library; reference them by name instead.
 
 Capacity is deliberately small. Above ~80% usage, consolidate before adding:
 merge overlapping entries, remove stale ones. An overflow error lists the

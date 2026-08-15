@@ -213,11 +213,26 @@ const KIND_LABEL: Record<PanelReviewRun['kind'], string> = { turn: '回合', com
 
 function runSummary(run: PanelReviewRun): string {
   if (run.error !== undefined) return `失败:${run.error.split('\n')[0]}`
-  if (run.applied + run.rejected + run.malformed + run.foreign === 0) return '无可存内容'
-  const parts = [`存 ${run.applied}`]
+  const parts: string[] = []
+  const memoryActions = run.applied + run.rejected + run.malformed + run.foreign
+  const skill = run.skillActions
+  const skillTotal = skill === undefined
+    ? 0
+    : skill.created + skill.updated + skill.patched + skill.deleted + skill.filesWritten + skill.filesRemoved
+  if (memoryActions === 0 && skillTotal === 0) return '无可存内容'
+  if (run.applied > 0) parts.push(`存 ${run.applied}`)
   if (run.rejected > 0) parts.push(`弃 ${run.rejected}`)
   if (run.malformed > 0) parts.push(`畸形 ${run.malformed}`)
   if (run.foreign > 0) parts.push(`越界调用 ${run.foreign}`)
+  if (skill !== undefined && skillTotal > 0) {
+    const bits: string[] = []
+    if (skill.created > 0) bits.push(`建 ${skill.created}`)
+    if (skill.updated > 0) bits.push(`改 ${skill.updated}`)
+    if (skill.patched > 0) bits.push(`补丁 ${skill.patched}`)
+    if (skill.deleted > 0) bits.push(`删 ${skill.deleted}`)
+    if (skill.filesWritten > 0) bits.push(`文件 ${skill.filesWritten}`)
+    parts.push(`skill ${bits.join('/')}${skill.skills.length > 0 ? `:${skill.skills.join(',')}` : ''}`)
+  }
   return parts.join(' · ')
 }
 
@@ -238,6 +253,11 @@ function ActivitySection({ runs }: { runs: readonly PanelReviewRun[] }): ReactNo
           {run.entries !== undefined && run.entries.length > 0 && (
             <ul style={styles.runEntries}>
               {run.entries.map((entry, index) => <li key={index}>{entry}</li>)}
+            </ul>
+          )}
+          {run.trace !== undefined && run.trace.length > 0 && (
+            <ul style={styles.runEntries}>
+              {run.trace.map((line, index) => <li key={index}>{line}</li>)}
             </ul>
           )}
         </div>

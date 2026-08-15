@@ -44,6 +44,16 @@ export interface Config {
   reviewHistoryLimit?: number
   /** Output budget of one /memory compact consolidation call. */
   consolidateMaxTokens?: number
+  /** Skill route of the review fork: techniques become skills, not memory
+   * entries (Hermes' two-route split). */
+  skillReview?: boolean
+  /** Maximum LLM steps in one review fork loop. */
+  reviewMaxSteps?: number
+  /** Curator skill library root; defaults to `$DSH_HOME/skills` (dsh's own
+   * user skill root, so new skills appear in every session's catalog). */
+  skillRoot?: string
+  /** Per-file byte cap for skill writes. */
+  skillMaxBytes?: number
 }
 
 /** Schemastery config; drives Loader defaults, settings UI, and config docs. */
@@ -62,8 +72,13 @@ export const Config: z<Config> = z.object({
   compactionHarvest: z.boolean().default(true),
   reviewHistoryLimit: z.number().step(1).min(10).default(200),
   consolidateMaxTokens: z.number().step(1).min(200).default(2000),
+  skillReview: z.boolean().default(true),
+  reviewMaxSteps: z.number().step(1).min(1).max(32).default(8),
+  skillRoot: z.string(),
+  skillMaxBytes: z.number().step(1).min(1024).default(65536),
 })
 
-/** Config with schema defaults applied; the model-override pair stays optional. */
-export type Resolved = Required<Omit<Config, 'reviewProvider' | 'reviewModel'>>
-  & Pick<Config, 'reviewProvider' | 'reviewModel'>
+/** Config with schema defaults applied; the model-override pair and the
+ * optional skill-root override stay optional. */
+export type Resolved = Required<Omit<Config, 'reviewProvider' | 'reviewModel' | 'skillRoot'>>
+  & Pick<Config, 'reviewProvider' | 'reviewModel' | 'skillRoot'>

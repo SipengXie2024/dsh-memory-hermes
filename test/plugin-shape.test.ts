@@ -25,6 +25,9 @@ describe('plugin shape', () => {
       compactionHarvest: true,
       reviewHistoryLimit: 200,
       consolidateMaxTokens: 2000,
+      skillReview: true,
+      reviewMaxSteps: 8,
+      skillMaxBytes: 65536,
     })
   })
 

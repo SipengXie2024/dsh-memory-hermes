@@ -209,7 +209,25 @@ dsh --profile web --dump-config
 
 **排查**:没有收割记录 → 确认确实发生了 compaction(活动页签只有 review,不记 compaction 本身);确认 `compactionHarvest` 没关、`approval` 没开(开审批会抑制一切后台 review)。
 
-## 13. 设置页与人审合并(web)
+## 13. skill 分流(v3 新增)
+
+前置:`skillReview` 保持默认(true)。
+
+1. 新开 session,聊一条明确的团队工作流经验(如「我们团队规定:插件 UI 完整面板一律放 settings.section,以后都要遵守」),不要求记忆。
+2. 等 turn 结束后稍候(fork 循环可能跑 2-4 步,每步一次 LLM 调用)。
+3. 看设置页「记忆」→「活动」页签:这条 review 记录应有 **trace**(`s1 skills_list(...) -> ok`、`s2 skill_manage(create ...) -> ok` 之类)和 skillActions 计数。
+4. ```bash
+   dir %USERPROFILE%\.dsh\skills
+   type %USERPROFILE%\.dsh\skills\<新 skill 名>\SKILL.md
+   ```
+
+**预期**:出现新 skill 目录,SKILL.md frontmatter 带 `created_by: agent`;MEMORY.md **没有**新增这条技术经验(分流生效);新开会话的 available_skills 目录里能看到这个 skill。
+
+**保护验证**:往 `%USERPROFILE%\.dsh\skills\` 手工建一个无标记的 skill 目录,再触发一次 `/memory review`,确认它不被改(活动页签 trace 里如有针对它的写,结果应是 refused)。
+
+**排查**:trace 只有 skills_list 没有 create → 模型判断"Nothing to save"(弱模型在库全是 user-owned 时会保守),用 `/memory review <focus>` 点名让它建;`/memory skills` 可随时看库。
+
+## 14. 设置页与人审合并(web)
 
 1. `dsh web` 启动(等价于 `dsh --profile web`;`--port` 可换端口)。
 2. 打开设置(齿轮)→ 左侧导航应有「记忆」页(v2 起;v0.1.1 之前在侧栏底部,因与 Cordis 动态插件卡片视觉重叠而迁移)。

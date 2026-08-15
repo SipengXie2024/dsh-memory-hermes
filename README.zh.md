@@ -16,10 +16,11 @@ Hermes 式有界策划记忆,做成 DeepSeek Harness(dsh)的用户侧插件。�
 | 安全扫描 | 写入时 + 注入渲染时 + **错误载荷**三处同一规则表:不可见 Unicode、注入话术、外传形状;命中即拒/隐藏 |
 | 审批闸门 | `approval: true` 时每次写弹审批——实现为 dsh 设计的 `tools/pre-execute` 策略监听器(ask 决策),工具本体无策略;无审批渠道时运行时 fail-closed(默认关) |
 | 并发安全 | 进程内 promise 链串行 + 跨进程 `.lock` 文件锁 + 原子写(照 dsh settings-file 同款姿势) |
-| 后台自省 | 后台 LLM 调用重看会话、自动提取值得长期记住的事实写入记忆;三种触发:turn 结束(按策略)、**compaction 收割**(上下文折叠前抢救)、`/memory review` 手动 |
-| 自省可观测 | 每次 review 落一条记录进 storage-domain sidecar(`memory_hermes` 域),设置页「活动」页签可查:跑了没、存了几条、为何失败 |
+| 后台自省 | 后台 fork 循环重看会话,双路分流:**memory 路**收窄(用户画像/行为期望/当前状态),**skill 路**沉淀技术经验进 skill 库;触发:turn 结束(按策略)、compaction 收割、`/memory review [focus]` |
+| 自省可观测 | 每次 review 落一条记录进 storage-domain sidecar(`memory_hermes` 域),设置页「活动」页签可查:跑了没、存了几条、为何失败、**逐步工具调用 trace** |
+| skill 库 | 技术经验落地 `$DSH_HOME/skills/`(dsh 自带用户 skill 根,watcher 热发现):类级 skill + references/templates/scripts/assets;`created_by: agent` 标记的才归 curator 管,手写的一律受保护 |
 | 记忆活动投影 | 注册 sessionProjections 单元 `memoryActivity`,从本会话日志 fold 出 memory 工具调用统计——日志派生物,resume 免费 |
-| 设置页与命令 | dsh web 设置导航「记忆」页(文件 + 活动两个页签)+ `/memory`、`/memory review`、`/memory compact` 斜杠命令 |
+| 设置页与命令 | dsh web 设置导航「记忆」页(文件 + 活动两个页签)+ `/memory`、`/memory review [focus]`、`/memory compact`、`/memory skills` 斜杠命令 |
 | 检索层(可选) | 配合 dsh 船载 session-query(sqlite 全文索引)实现跨会话检索,见下文「配套:会话检索」 |
 
 ## 安装
@@ -75,6 +76,10 @@ memory-hermes:
     reviewTimeoutMs: 60000       # 单次 review 超时(毫秒),最小 1000
     reviewHistoryLimit: 200      # sidecar 保留的 review 记录条数
     consolidateMaxTokens: 2000   # /memory compact 合并调用的输出预算
+    skillReview: true            # v3:review 的 skill 路(技术经验进 skill 库)
+    reviewMaxSteps: 8            # fork 循环的最大 LLM 步数
+    skillMaxBytes: 65536         # 单个 skill 文件的字节上限
+    # skillRoot: C:/Users/<你>/.dsh/skills  # skill 库根;默认就是 dsh 用户 skill 根
     # reviewProvider: deepseek   # review/compact 换模型用;默认跟主会话(吃前缀缓存)
     # reviewModel: deepseek-chat
 ```
@@ -95,13 +100,30 @@ memory-hermes:
 - **与审批互斥**:`approval: true` 时 review 触发被抑制——后台写无法弹审批,绕过闸门又违背开审批的本意(v2 起改为触发时判定,配置热切换即时生效)。
 - **失败静默**:review 调用出错只记 warn 日志 + sidecar 错误记录,不重试、不打扰主对话。
 
+## 记忆/技能分流(v3)
+
+v2 及以前,review 把所有类别(技术经验、环境事实、用户偏好)都塞进 2200 码点的 MEMORY.md——长得快是必然的。v3 对齐 Hermes 的真实分流(依据 `agent/background_review.py` 与 `tools/skill_manager_tool.py` 源码):
+
+| 路 | 存什么 | 存到哪 |
+|---|---|---|
+| **memory 路** | 用户是谁:persona、偏好、个人细节、对 agent 的行为期望、当前状态 | 有界双文件(不变) |
+| **skill 路** | 怎么干这类活:技术教训、工作流修正、踩坑修复 | `$DSH_HOME/skills/` 无界 skill 库 |
+
+- **fork 循环**:review 从"一次 LLM 调用"升级为有界 agent 循环(默认最多 `reviewMaxSteps: 8` 步):模型可以 `skills_list`(L0 目录)→ `skill_view`(L1 正文 / L2 支持文件)→ `skill_manage`(六动作 create/edit/patch/delete/write_file/remove_file)逐步干活;每步的工具调用与结果写进 sidecar 的 **trace**(活动页签可见)。
+- **两道保护闸**(对齐 Hermes):① **provenance**——只有带 `created_by: agent` frontmatter 标记的 skill 归 curator 管,你手写的 skill 一律拒改(fail-closed);② **read-before-write**——fork 必须先 `skill_view` 读过目标才能 patch/edit 它,不许凭对话印象盲改。
+- **catalog 集成零接线**:skill 落点就是 dsh 自带的用户 skill 根(`$DSH_HOME/skills`,含 junction 联接),dsh 的 filesystem skill provider 热发现——新 skill 自动出现在所有会话的 skill 目录里,前台用原生 `skill` 工具加载;`skillReview: false` 可关掉 skill 路(退回纯 memory review)。
+- **模型路由**(对齐 Hermes):review 默认跟会话同 provider/model 全量重放(吃前缀缓存);`reviewProvider`/`reviewModel` 指到异模型时改发 digest 回放(末尾 24 条 + 早期合成摘要),冷缓存省 token。
+- 与 Hermes 的三处有意偏差:provenance 标记存 frontmatter 而非遥测台账(规避记录缺失竞态);skill 工具只在 fork 循环内注册(前台创建 skill 用普通文件工具,产物无标记即受保护);不移植 skill_usage 使用遥测。
+- 注意:skill 建的勤不勤取决于模型对指令的遵守度(Hermes 原文同款提示词;"Be ACTIVE");库全是 user-owned 时弱模型可能保守地说"Nothing to save"——`/memory review <focus>` 可以点名让它建。
+
 ## 设置页与 /memory 命令
 
 - **设置页**:dsh web 设置导航里的「记忆」页(settings.section 注册),两个页签:
   - **文件**:MEMORY.md / USER.md 两区,各带用量条与条目列表;条目可内联编辑、两击确认删除、输入框新增。面板编辑**不走审批闸、不受扫描拒写**(操作者就是审批人);会被扫描命中的条目带三角警示标记,仅提示不拦截。
   - **活动**:后台 review 记录列表(时间、触发类型、turn、存/弃/失败、条目摘要),Refresh 拉取。
 - **`/memory`**:输出两文件用量头与条目全文(任意端)。
-- **`/memory review`**:立刻对当前会话跑一次后台 review(绕过触发策略,记为 manual)。
+- **`/memory review [focus]`**:立刻对当前会话跑一次后台 review(绕过触发策略,记为 manual);focus 文本会追加进 review 指令(对齐 Hermes 的 /refine 聚焦语义),如 `/memory review 把刚才的调试过程存成 skill`。
+- **`/memory skills`**:列出 skill 库(名称 + 描述 + user-owned 标记)。
 - **`/memory compact`**:一次 LLM 调用产出合并方案,经 dsh 审批服务**人审**通过后整体重写两文件(store.rewrite,同锁内原子写路径);无审批渠道时只展示方案不落盘。
 - profile 没装 commands 插件时命令静默不注册。
 

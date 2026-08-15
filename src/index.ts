@@ -33,6 +33,7 @@ import { installReview } from './review.js'
 import type { ReviewControl, TokenMeterLike } from './review.js'
 import { createReviewLog } from './reviewlog.js'
 import { createConfigSource } from './settings.js'
+import { CuratorSkillStore } from './skills/store.js'
 import { MemoryStore } from './store.js'
 import { buildMemoryTool } from './tool.js'
 
@@ -81,6 +82,13 @@ export function apply(ctx: Context, config: Config): void {
   installApprovalPolicy(ctx, configSource)
 
   const reviewLog = createReviewLog(ctx, () => configSource.get().reviewHistoryLimit, warn)
+  // The skill route's library: dsh's own user skill root by default, so
+  // curator skills land in every session's catalog via the stock filesystem
+  // skill provider (which watches that root).
+  const skillStore = new CuratorSkillStore({
+    root: configSource.get().skillRoot ?? dshHomePath('skills'),
+    maxFileBytes: configSource.get().skillMaxBytes,
+  })
   let reviewControl: ReviewControl | undefined
   ctx.inject(['llm'], (scoped) => {
     reviewControl = installReview(scoped, {
@@ -88,12 +96,17 @@ export function apply(ctx: Context, config: Config): void {
       configSource,
       reviewLog: reviewLog.log,
       tokenMeter: scoped.get('tokenMeter') as TokenMeterLike | undefined,
+      skillStore,
     })
   })
   installProjection(ctx)
 
   installMemoryCommand(ctx, store, {
-    triggerReview: (agent) => { reviewControl?.triggerNow(agent) },
+    triggerReview: (agent, focus) => { reviewControl?.triggerNow(agent, focus) },
+    listSkills: async () => {
+      const skills = await skillStore.list()
+      return skills.map(skill => `${skill.name}: ${skill.description}${skill.curatorManaged ? '' : ' (user-owned)'}`)
+    },
     runCompact: (agent, signal) => runCompact(ctx, {
       store,
       configSource,

@@ -21,6 +21,18 @@ import { z } from 'zod'
 /** What triggered one background review pass. */
 export type ReviewKind = 'turn' | 'compaction' | 'manual'
 
+/** Per-run skill mutation tally (present when the skill route ran). */
+export const skillActionCountsSchema = z.object({
+  created: z.number().int(),
+  updated: z.number().int(),
+  patched: z.number().int(),
+  deleted: z.number().int(),
+  filesWritten: z.number().int(),
+  filesRemoved: z.number().int(),
+  skills: z.array(z.string()),
+})
+export type SkillActionCounts = z.infer<typeof skillActionCountsSchema>
+
 /** One settled review pass; plain JSON, wire-safe as-is. */
 export const reviewRunSchema = z.object({
   id: z.string(),
@@ -34,6 +46,11 @@ export const reviewRunSchema = z.object({
   rejected: z.number().int(),
   malformed: z.number().int(),
   foreign: z.number().int(),
+  /** Fork steps used (LLM calls in the loop). */
+  steps: z.number().int().optional(),
+  skillActions: skillActionCountsSchema.optional(),
+  /** Per-step tool-call trace lines (bounded), for the activity tab. */
+  trace: z.array(z.string()).optional(),
   /** Truncated text of each applied write. */
   entries: z.array(z.string()).optional(),
   /** Set when the pass failed or could not run at all. */

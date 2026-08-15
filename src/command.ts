@@ -31,29 +31,31 @@ export function renderMemoryReport(snapshots: Readonly<Record<MemoryFileKey, Fil
 
 /** Operator actions the command delegates to the review/compact machinery. */
 export interface MemoryCommandExtras {
-  readonly triggerReview?: (agent: Agent) => void
+  readonly triggerReview?: (agent: Agent, focus?: string) => void
   readonly runCompact?: (agent: Agent, signal: AbortSignal) => Promise<string>
+  readonly listSkills?: () => Promise<readonly string[]>
 }
 
-const USAGE = 'Usage: /memory — show the memory files; /memory review — run a background review '
-  + 'now; /memory compact — propose a human-reviewed consolidation.'
+const USAGE = 'Usage: /memory — show the memory files; /memory review [focus] — run a background '
+  + 'review now; /memory compact — propose a human-reviewed consolidation; /memory skills — list the skill library.'
 
 /** Register /memory when the commands service is available. */
 export function installMemoryCommand(ctx: Context, store: MemoryStore, extras: MemoryCommandExtras = {}): void {
   ctx.inject(['commands'], (scoped) => {
     scoped.commands.register({
       name: 'memory',
-      description: 'Show the persistent memory files; /memory review and /memory compact for upkeep',
+      description: 'Show the persistent memory files; /memory review [focus], /memory compact, /memory skills for upkeep',
       handler: async (invocation) => {
         const input = (invocation.rawInput ?? '').trim()
         if (input === '') {
           return { kind: 'success' as const, text: renderMemoryReport(store.readAllSync()) }
         }
-        if (input === 'review') {
+        if (input === 'review' || input.startsWith('review ')) {
           if (extras.triggerReview === undefined) {
             return { kind: 'success' as const, text: 'Background review is not wired in this profile.' }
           }
-          extras.triggerReview(invocation.agent)
+          const focus = input === 'review' ? undefined : input.slice('review '.length).trim()
+          extras.triggerReview(invocation.agent, focus === '' ? undefined : focus)
           return { kind: 'success' as const, text: 'Background review triggered; the memory settings page activity log will show the outcome.' }
         }
         if (input === 'compact') {
@@ -61,6 +63,13 @@ export function installMemoryCommand(ctx: Context, store: MemoryStore, extras: M
             return { kind: 'success' as const, text: 'Compaction is not wired in this profile.' }
           }
           return { kind: 'success' as const, text: await extras.runCompact(invocation.agent, invocation.signal) }
+        }
+        if (input === 'skills') {
+          if (extras.listSkills === undefined) {
+            return { kind: 'success' as const, text: 'The skill library is not wired in this profile.' }
+          }
+          const lines = await extras.listSkills()
+          return { kind: 'success' as const, text: lines.length === 0 ? '(skill library is empty)' : lines.join('\n') }
         }
         return { kind: 'success' as const, text: USAGE }
       },
