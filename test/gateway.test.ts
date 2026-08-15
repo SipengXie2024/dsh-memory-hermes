@@ -28,10 +28,27 @@ afterEach(() => {
 })
 
 describe('MemoryHermesGateway wiring', () => {
-  it('binds the wire namespace and marks list/mutate/listReviewRuns as Remote methods', () => {
+  it('binds the wire namespace and marks the Remote methods', () => {
     expect(gateway.typertRemote.namespace).toBe(GATEWAY_NAMESPACE)
     const markers = remoteMethods(gateway)
-    expect(markers.map(marker => marker.method).sort()).toEqual(['list', 'listReviewRuns', 'mutate'])
+    expect(markers.map(marker => marker.method).sort()).toEqual(['list', 'listReviewRuns', 'listSkills', 'mutate'])
+  })
+})
+
+describe('MemoryHermesGateway.listSkills', () => {
+  it('answers an empty list without a skill store, and rows with one', async () => {
+    expect((await gateway.listSkills()).skills).toEqual([])
+    const withSkills = new MemoryHermesGateway(new Context(), store, () => [], {
+      list: async () => [
+        { name: 'dsh-plugin-workflow', description: 'UI 落位与打包', dir: '/x', curatorManaged: true },
+        { name: 'agent-reach', description: '', dir: '/y', curatorManaged: false },
+      ],
+    })
+    const { skills } = await withSkills.listSkills()
+    expect(skills).toEqual([
+      { name: 'dsh-plugin-workflow', description: 'UI 落位与打包', curatorManaged: true },
+      { name: 'agent-reach', description: '', curatorManaged: false },
+    ])
   })
 })
 

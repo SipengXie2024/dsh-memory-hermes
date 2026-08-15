@@ -54,11 +54,28 @@ export interface PanelReviewRunsResult {
 /** One activity row (type alias so the client half imports it type-only). */
 export type PanelReviewRun = ReviewRun
 
+/** One skill-library row for the panel's skills tab. */
+export interface PanelSkill {
+  readonly name: string
+  readonly description: string
+  readonly curatorManaged: boolean
+}
+
+export interface PanelSkillsResult {
+  readonly skills: readonly PanelSkill[]
+}
+
+/** Structural view of the skill store's list seam. */
+export interface SkillListSource {
+  list(): Promise<readonly PanelSkill[]>
+}
+
 export class MemoryHermesGateway extends TypertRemoteService {
   constructor(
     ctx: Context,
     private readonly store: MemoryStore,
     private readonly reviewRuns: () => Promise<readonly ReviewRun[]> | readonly ReviewRun[] = () => [],
+    private readonly skillStore?: SkillListSource,
   ) {
     super(ctx, GATEWAY_NAMESPACE)
   }
@@ -95,5 +112,12 @@ export class MemoryHermesGateway extends TypertRemoteService {
   @Remote('listReviewRuns')
   async listReviewRuns(): Promise<PanelReviewRunsResult> {
     return { runs: await this.reviewRuns() }
+  }
+
+  @Remote('listSkills')
+  async listSkills(): Promise<PanelSkillsResult> {
+    if (this.skillStore === undefined) return { skills: [] }
+    const skills = await this.skillStore.list()
+    return { skills: skills.map(skill => ({ name: skill.name, description: skill.description, curatorManaged: skill.curatorManaged })) }
   }
 }

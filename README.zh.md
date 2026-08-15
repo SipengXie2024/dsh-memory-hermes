@@ -118,9 +118,10 @@ v2 及以前,review 把所有类别(技术经验、环境事实、用户偏好)�
 
 ## 设置页与 /memory 命令
 
-- **设置页**:dsh web 设置导航里的「记忆」页(settings.section 注册),两个页签:
+- **设置页**:dsh web 设置导航里的「记忆」页(settings.section 注册),三个页签:
   - **文件**:MEMORY.md / USER.md 两区,各带用量条与条目列表;条目可内联编辑、两击确认删除、输入框新增。面板编辑**不走审批闸、不受扫描拒写**(操作者就是审批人);会被扫描命中的条目带三角警示标记,仅提示不拦截。
-  - **活动**:后台 review 记录列表(时间、触发类型、turn、存/弃/失败、条目摘要),Refresh 拉取。
+  - **技能**:skill 库一览(名称 + 描述;手写 skill 带标记,与 curator 建的区分)。
+  - **活动**:后台 review 记录列表。每条一行摘要(时间、类型、人话结论:存了几条/动了哪些 skill/没有新内容)+ 人性化时长;失败行只显示清理后的错误单行(嵌套 JSON 已解开);逐步工具调用 trace 收在「过程(N 步)」折叠里,Refresh 拉取。
 - **`/memory`**:输出两文件用量头与条目全文(任意端)。
 - **`/memory review [focus]`**:立刻对当前会话跑一次后台 review(绕过触发策略,记为 manual);focus 文本会追加进 review 指令(对齐 Hermes 的 /refine 聚焦语义),如 `/memory review 把刚才的调试过程存成 skill`。
 - **`/memory skills`**:列出 skill 库(名称 + 描述 + user-owned 标记)。

@@ -114,5 +114,5 @@ export function apply(ctx: Context, config: Config): void {
     }, agent, signal),
   })
   // Registers itself on construction; the settings page talks to it over RPC.
-  new MemoryHermesGateway(ctx, store, reviewLog.listRuns)
+  new MemoryHermesGateway(ctx, store, reviewLog.listRuns, skillStore)
 }

@@ -7,15 +7,16 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
-import type { PanelFile, PanelListResult, PanelMutateOutcome, PanelReviewRun, PanelReviewRunsResult } from '../gateway.js'
+import type { PanelFile, PanelListResult, PanelMutateOutcome, PanelReviewRun, PanelReviewRunsResult, PanelSkill, PanelSkillsResult } from '../gateway.js'
 import type { MemoryToolArgs } from '../tool.js'
-import { formatUsage } from './logic.js'
+import { cleanErrorMessage, formatDuration, formatUsage, summarizeRun } from './logic.js'
 
 /** Business face injected by this package's register call. */
 export interface MemoryPanelFace {
   listMemory: () => Promise<PanelListResult>
   mutateMemory: (op: MemoryToolArgs) => Promise<PanelMutateOutcome>
   listReviewRuns: () => Promise<PanelReviewRunsResult>
+  listSkills: () => Promise<PanelSkillsResult>
 }
 
 /** The thunk closes over the face; settings.section's only owner prop is
@@ -211,55 +212,57 @@ function FileSection({ file, busy, editing, confirming, onEdit, onDraft, onSave,
 
 const KIND_LABEL: Record<PanelReviewRun['kind'], string> = { turn: '回合', compaction: '折叠收割', manual: '手动' }
 
-function runSummary(run: PanelReviewRun): string {
-  if (run.error !== undefined) return `失败:${run.error.split('\n')[0]}`
-  const parts: string[] = []
-  const memoryActions = run.applied + run.rejected + run.malformed + run.foreign
-  const skill = run.skillActions
-  const skillTotal = skill === undefined
-    ? 0
-    : skill.created + skill.updated + skill.patched + skill.deleted + skill.filesWritten + skill.filesRemoved
-  if (memoryActions === 0 && skillTotal === 0) return '无可存内容'
-  if (run.applied > 0) parts.push(`存 ${run.applied}`)
-  if (run.rejected > 0) parts.push(`弃 ${run.rejected}`)
-  if (run.malformed > 0) parts.push(`畸形 ${run.malformed}`)
-  if (run.foreign > 0) parts.push(`越界调用 ${run.foreign}`)
-  if (skill !== undefined && skillTotal > 0) {
-    const bits: string[] = []
-    if (skill.created > 0) bits.push(`建 ${skill.created}`)
-    if (skill.updated > 0) bits.push(`改 ${skill.updated}`)
-    if (skill.patched > 0) bits.push(`补丁 ${skill.patched}`)
-    if (skill.deleted > 0) bits.push(`删 ${skill.deleted}`)
-    if (skill.filesWritten > 0) bits.push(`文件 ${skill.filesWritten}`)
-    parts.push(`skill ${bits.join('/')}${skill.skills.length > 0 ? `:${skill.skills.join(',')}` : ''}`)
-  }
-  return parts.join(' · ')
-}
-
 /** Activity tab: one row per settled background review pass, newest first. */
 function ActivitySection({ runs }: { runs: readonly PanelReviewRun[] }): ReactNode {
   if (runs.length === 0) return <p style={styles.note}>还没有 review 记录。</p>
   return (
     <div>
-      {runs.map(run => (
-        <div key={run.id} style={styles.runRow}>
-          <div style={styles.runMeta}>
-            <span>{new Date(run.startedAt).toLocaleString()}</span>
-            <span>{KIND_LABEL[run.kind]}</span>
-            {run.turn >= 0 && <span>turn {run.turn}</span>}
-            <span>{runSummary(run)}</span>
-            <span>{Math.max(0, run.settledAt - run.startedAt)}ms</span>
+      {runs.map((run) => {
+        const failed = run.error !== undefined
+        const stepCount = run.trace?.length ?? 0
+        return (
+          <div key={run.id} style={styles.runRow}>
+            <div style={styles.runMeta}>
+              <span>{new Date(run.startedAt).toLocaleString()}</span>
+              <span>{KIND_LABEL[run.kind]}</span>
+              {run.turn >= 0 && <span>turn {run.turn}</span>}
+              <span>{formatDuration(Math.max(0, run.settledAt - run.startedAt))}</span>
+            </div>
+            {failed
+              ? <p style={styles.errorText}>{`失败:${cleanErrorMessage(run.error!)}`}</p>
+              : <p style={styles.note}>{summarizeRun(run)}</p>}
+            {run.entries !== undefined && run.entries.length > 0 && (
+              <ul style={styles.runEntries}>
+                {run.entries.map((entry, index) => <li key={index}>{entry}</li>)}
+              </ul>
+            )}
+            {stepCount > 0 && (
+              <details style={styles.note}>
+                <summary style={{ cursor: 'pointer' }}>{`过程(${stepCount} 步)`}</summary>
+                <ul style={styles.runEntries}>
+                  {run.trace!.map((line, index) => <li key={index}>{line}</li>)}
+                </ul>
+              </details>
+            )}
           </div>
-          {run.entries !== undefined && run.entries.length > 0 && (
-            <ul style={styles.runEntries}>
-              {run.entries.map((entry, index) => <li key={index}>{entry}</li>)}
-            </ul>
-          )}
-          {run.trace !== undefined && run.trace.length > 0 && (
-            <ul style={styles.runEntries}>
-              {run.trace.map((line, index) => <li key={index}>{line}</li>)}
-            </ul>
-          )}
+        )
+      })}
+    </div>
+  )
+}
+
+/** Skills tab: the curator library, with user-owned skills marked. */
+function SkillsSection({ skills }: { skills: readonly PanelSkill[] }): ReactNode {
+  if (skills.length === 0) return <p style={styles.note}>skill 库还是空的——等后台 review 从对话里沉淀,或用 /memory review 点名让它建。</p>
+  return (
+    <div>
+      {skills.map(skill => (
+        <div key={skill.name} style={styles.runRow}>
+          <div style={styles.runMeta}>
+            <span style={{ color: 'var(--dsw-alias-label-primary)', fontWeight: 500 }}>{skill.name}</span>
+            {!skill.curatorManaged && <span style={styles.note}>手写</span>}
+          </div>
+          {skill.description !== '' && <p style={styles.note}>{skill.description}</p>}
         </div>
       ))}
     </div>
@@ -267,10 +270,11 @@ function ActivitySection({ runs }: { runs: readonly PanelReviewRun[] }): ReactNo
 }
 
 /** The settings page body: usage meters, entries, and edit controls. */
-export function MemoryPanel({ listMemory, mutateMemory, listReviewRuns }: MemoryPanelProps): ReactNode {
-  const [tab, setTab] = useState<'files' | 'activity'>('files')
+export function MemoryPanel({ listMemory, mutateMemory, listReviewRuns, listSkills }: MemoryPanelProps): ReactNode {
+  const [tab, setTab] = useState<'files' | 'skills' | 'activity'>('files')
   const [data, setData] = useState<PanelListResult | undefined>(undefined)
   const [runs, setRuns] = useState<readonly PanelReviewRun[] | undefined>(undefined)
+  const [skills, setSkills] = useState<readonly PanelSkill[] | undefined>(undefined)
   const [loadError, setLoadError] = useState<string | undefined>(undefined)
   const [actionError, setActionError] = useState<string | undefined>(undefined)
   const [busy, setBusy] = useState(false)
@@ -281,13 +285,14 @@ export function MemoryPanel({ listMemory, mutateMemory, listReviewRuns }: Memory
   const refresh = useCallback(async () => {
     try {
       setLoadError(undefined)
-      const [filesResult, runsResult] = await Promise.all([listMemory(), listReviewRuns()])
+      const [filesResult, runsResult, skillsResult] = await Promise.all([listMemory(), listReviewRuns(), listSkills()])
       setData(filesResult)
       setRuns(runsResult.runs)
+      setSkills(skillsResult.skills)
     } catch (error) {
       setLoadError(errorMessage(error))
     }
-  }, [listMemory, listReviewRuns])
+  }, [listMemory, listReviewRuns, listSkills])
 
   useEffect(() => {
     void refresh()
@@ -315,6 +320,7 @@ export function MemoryPanel({ listMemory, mutateMemory, listReviewRuns }: Memory
         <span style={styles.title}>Memory</span>
         <span style={styles.tabRow}>
           <button type="button" style={tab === 'files' ? styles.tabActive : styles.tab} onClick={() => { setTab('files') }}>文件</button>
+          <button type="button" style={tab === 'skills' ? styles.tabActive : styles.tab} onClick={() => { setTab('skills') }}>技能</button>
           <button type="button" style={tab === 'activity' ? styles.tabActive : styles.tab} onClick={() => { setTab('activity') }}>活动</button>
           <button type="button" style={styles.miniButton} disabled={busy} onClick={() => { void refresh() }}>Refresh</button>
         </span>
@@ -326,6 +332,11 @@ export function MemoryPanel({ listMemory, mutateMemory, listReviewRuns }: Memory
           runs === undefined
             ? (loadError === undefined ? <p style={styles.note}>Loading&hellip;</p> : null)
             : <ActivitySection runs={runs} />
+        )}
+        {tab === 'skills' && (
+          skills === undefined
+            ? (loadError === undefined ? <p style={styles.note}>Loading&hellip;</p> : null)
+            : <SkillsSection skills={skills} />
         )}
         {tab === 'files' && data === undefined && loadError === undefined && <p style={styles.note}>Loading&hellip;</p>}
         {tab === 'files' && data?.files.map(file => (
