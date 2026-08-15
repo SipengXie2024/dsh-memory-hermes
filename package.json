@@ -1,6 +1,6 @@
 {
   "name": "dsh-memory-hermes",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Hermes-style bounded curated memory for DeepSeek Harness (out-of-tree plugin)",
   "type": "module",
   "main": "dist/index.js",
@@ -26,8 +26,7 @@
     "client": {
       "inject": [
         "@deepseek-ai/dsh-client-runtime",
-        "@deepseek-ai/dsh-client-connection",
-        "@deepseek-ai/dsh-client-ui-sidebar"
+        "@deepseek-ai/dsh-client-connection"
       ],
       "platform": "web"
     }
@@ -63,7 +62,7 @@
     "@deepseek-ai/dsh-atomic-write": "0.1.0-rc.6",
     "@deepseek-ai/dsh-client-connection": "0.1.0-rc.6",
     "@deepseek-ai/dsh-client-runtime": "0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-ui-sidebar": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-ui-settings": "0.1.0-rc.6",
     "@deepseek-ai/dsh-client-ui-slots": "0.1.0-rc.6",
     "@deepseek-ai/dsh-commands": "0.1.0-rc.6",
     "@deepseek-ai/dsh-home-paths": "0.1.0-rc.6",

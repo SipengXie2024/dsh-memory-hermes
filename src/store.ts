@@ -33,7 +33,8 @@ export interface MemoryFileSpec {
   readonly path: string
   /** Display name, e.g. `MEMORY.md`. */
   readonly label: string
-  readonly limit: number
+  /** Mutable so a live settings change can retune the budget without a restart. */
+  limit: number
 }
 
 export interface MemoryStoreOptions {

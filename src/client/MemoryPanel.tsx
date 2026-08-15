@@ -1,9 +1,8 @@
 /**
- * The sidebar-foot memory panel: a persistent footer action that opens a
- * fixed overlay showing MEMORY.md / USER.md entries with usage meters and
- * add / edit / delete controls. Layout and theme tokens mirror dsh's
- * CordisPanel (the shipped sidebar.footer.action occupant), restated as
- * inline styles so this bundle needs no CSS pipeline.
+ * The memory settings page: a settings.section entry showing MEMORY.md /
+ * USER.md entries with usage meters and add / edit / delete controls.
+ * Theme tokens mirror dsh's shipped settings pages, restated as inline
+ * styles so this bundle needs no CSS pipeline.
  */
 
 import { useCallback, useEffect, useState } from 'react'
@@ -18,35 +17,21 @@ export interface MemoryPanelFace {
   mutateMemory: (op: MemoryToolArgs) => Promise<PanelMutateOutcome>
 }
 
-/** Owner share of sidebar.footer.action (wide vs 56px rail) + the face. */
-export type MemoryPanelProps = { wide: boolean } & MemoryPanelFace
+/** The thunk closes over the face; settings.section's only owner prop is
+ * `close`, which this page never uses. */
+export type MemoryPanelProps = MemoryPanelFace
 
 const styles = {
-  layer: { position: 'relative', flex: 'none', display: 'flex', alignItems: 'center', width: '100%', height: 49, margin: '8px 0 0' },
-  layerRail: { position: 'relative', flex: 'none', display: 'flex', alignItems: 'center', width: 36, height: 36, margin: 0 },
-  badge: {
-    display: 'inline-flex', alignItems: 'center', gap: 8, width: '100%', height: 49,
-    padding: '0 8px 0 6px', border: 'none', borderRadius: 12, background: 'transparent',
-    color: 'var(--dsw-alias-label-primary)', fontFamily: 'inherit', fontSize: 14, cursor: 'pointer', overflow: 'hidden',
-  },
-  badgeRail: {
-    display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36,
-    padding: 0, border: 'none', borderRadius: '50%', background: 'transparent',
-    color: 'var(--dsw-alias-label-primary)', cursor: 'pointer',
-  },
-  panel: {
-    position: 'fixed', left: 12, bottom: 128, zIndex: 30, display: 'flex', flexDirection: 'column',
-    width: 420, maxWidth: 'calc(100vw - 24px)', maxHeight: '60vh', overflow: 'hidden',
-    border: '1px solid var(--dsw-alias-border-l1)', borderRadius: 12,
-    background: 'var(--dsw-alias-bg-base)', boxShadow: 'var(--dsw-shadow-lv2)',
+  page: {
+    display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 640,
+    fontSize: 12, color: 'var(--dsw-alias-label-secondary)',
   },
   header: {
     flex: 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-    minHeight: 44, padding: '10px 12px', boxSizing: 'border-box',
-    borderBottom: '1px solid var(--dsw-alias-border-l2)', background: 'var(--dsw-alias-bg-base)',
+    minHeight: 32, boxSizing: 'border-box',
   },
   title: { fontSize: 13, fontWeight: 500, lineHeight: '20px', color: 'var(--dsw-alias-label-primary)' },
-  body: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '4px 12px 12px' },
+  body: { display: 'flex', flexDirection: 'column' },
   note: { margin: '4px 0', fontSize: 12, lineHeight: '18px', color: 'var(--dsw-alias-label-tertiary)' },
   errorText: { margin: '4px 0', fontSize: 12, lineHeight: '18px', color: 'var(--dsw-alias-state-error-primary)', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' },
   group: {
@@ -86,19 +71,6 @@ const styles = {
     background: 'var(--dsw-alias-bg-base)', color: 'var(--dsw-alias-label-primary)', font: 'inherit', fontSize: 12,
   },
 } satisfies Record<string, CSSProperties>
-
-function MemoryIcon({ size = 16 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path
-        d="M3 3.5C3 2.7 3.7 2 4.5 2H12a1 1 0 0 1 1 1v9.3a1 1 0 0 1-1 1H4.8A1.8 1.8 0 0 0 3 14.5V3.5Z"
-        stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round"
-      />
-      <path d="M3 12.4c0-1 .8-1.8 1.8-1.8H13" stroke="currentColor" strokeWidth="1.2" />
-      <path d="M6 5.5h4M6 7.8h3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-    </svg>
-  )
-}
 
 function FlagIcon() {
   return (
@@ -221,9 +193,8 @@ function FileSection({ file, busy, editing, confirming, onEdit, onDraft, onSave,
   )
 }
 
-/** Render the footer trigger and the overlay panel. */
-export function MemoryPanel({ wide, listMemory, mutateMemory }: MemoryPanelProps): ReactNode {
-  const [open, setOpen] = useState(false)
+/** The settings page body: usage meters, entries, and edit controls. */
+export function MemoryPanel({ listMemory, mutateMemory }: MemoryPanelProps): ReactNode {
   const [data, setData] = useState<PanelListResult | undefined>(undefined)
   const [loadError, setLoadError] = useState<string | undefined>(undefined)
   const [actionError, setActionError] = useState<string | undefined>(undefined)
@@ -242,8 +213,8 @@ export function MemoryPanel({ wide, listMemory, mutateMemory }: MemoryPanelProps
   }, [listMemory])
 
   useEffect(() => {
-    if (open) void refresh()
-  }, [open, refresh])
+    void refresh()
+  }, [refresh])
 
   const run = useCallback(async (op: MemoryToolArgs, onSuccess?: () => void) => {
     if (busy) return
@@ -262,70 +233,56 @@ export function MemoryPanel({ wide, listMemory, mutateMemory }: MemoryPanelProps
   }, [busy, mutateMemory, refresh])
 
   return (
-    <div style={wide ? styles.layer : styles.layerRail}>
-      {open && (
-        <section style={styles.panel} aria-label="Persistent memory">
-          <header style={styles.header}>
-            <span style={styles.title}>Memory</span>
-            <button type="button" style={styles.miniButton} disabled={busy} onClick={() => { void refresh() }}>Refresh</button>
-          </header>
-          <div style={styles.body}>
-            {loadError !== undefined && <p style={styles.errorText}>{loadError}</p>}
-            {actionError !== undefined && <p style={styles.errorText}>{actionError}</p>}
-            {data === undefined && loadError === undefined && <p style={styles.note}>Loading&hellip;</p>}
-            {data?.files.map(file => (
-              <FileSection
-                key={file.key}
-                file={file}
-                busy={busy}
-                editing={editing}
-                confirming={confirming}
-                onEdit={(ref) => {
-                  setConfirming(undefined)
-                  setEditing({ ...ref, draft: ref.target })
-                }}
-                onDraft={(draft) => { setEditing(current => current === undefined ? current : { ...current, draft }) }}
-                onSave={() => {
-                  if (editing === undefined) return
-                  void run(
-                    { action: 'replace', file: editing.file, target: editing.target, new_content: editing.draft },
-                    () => { setEditing(undefined) },
-                  )
-                }}
-                onCancelEdit={() => { setEditing(undefined) }}
-                onAskDelete={(ref) => {
-                  setEditing(undefined)
-                  setConfirming(ref)
-                }}
-                onDelete={(ref) => {
-                  void run({ action: 'remove', file: ref.file, target: ref.target }, () => { setConfirming(undefined) })
-                }}
-                onCancelDelete={() => { setConfirming(undefined) }}
-                addDraft={addDrafts[file.key] ?? ''}
-                onAddDraft={(draft) => { setAddDrafts(current => ({ ...current, [file.key]: draft })) }}
-                onAdd={() => {
-                  const draft = (addDrafts[file.key] ?? '').trim()
-                  if (draft === '') return
-                  void run(
-                    { action: 'add', file: file.key, content: draft },
-                    () => { setAddDrafts(current => ({ ...current, [file.key]: '' })) },
-                  )
-                }}
-              />
-            ))}
-          </div>
-        </section>
-      )}
-      <button
-        type="button"
-        style={wide ? styles.badge : styles.badgeRail}
-        aria-label="Persistent memory"
-        aria-expanded={open}
-        onClick={() => { setOpen(value => !value) }}
-      >
-        <MemoryIcon size={wide ? 16 : 18} />
-        {wide && <span>Memory</span>}
-      </button>
+    <div style={styles.page}>
+      <header style={styles.header}>
+        <span style={styles.title}>Memory</span>
+        <button type="button" style={styles.miniButton} disabled={busy} onClick={() => { void refresh() }}>Refresh</button>
+      </header>
+      <div style={styles.body}>
+        {loadError !== undefined && <p style={styles.errorText}>{loadError}</p>}
+        {actionError !== undefined && <p style={styles.errorText}>{actionError}</p>}
+        {data === undefined && loadError === undefined && <p style={styles.note}>Loading&hellip;</p>}
+        {data?.files.map(file => (
+          <FileSection
+            key={file.key}
+            file={file}
+            busy={busy}
+            editing={editing}
+            confirming={confirming}
+            onEdit={(ref) => {
+              setConfirming(undefined)
+              setEditing({ ...ref, draft: ref.target })
+            }}
+            onDraft={(draft) => { setEditing(current => current === undefined ? current : { ...current, draft }) }}
+            onSave={() => {
+              if (editing === undefined) return
+              void run(
+                { action: 'replace', file: editing.file, target: editing.target, new_content: editing.draft },
+                () => { setEditing(undefined) },
+              )
+            }}
+            onCancelEdit={() => { setEditing(undefined) }}
+            onAskDelete={(ref) => {
+              setEditing(undefined)
+              setConfirming(ref)
+            }}
+            onDelete={(ref) => {
+              void run({ action: 'remove', file: ref.file, target: ref.target }, () => { setConfirming(undefined) })
+            }}
+            onCancelDelete={() => { setConfirming(undefined) }}
+            addDraft={addDrafts[file.key] ?? ''}
+            onAddDraft={(draft) => { setAddDrafts(current => ({ ...current, [file.key]: draft })) }}
+            onAdd={() => {
+              const draft = (addDrafts[file.key] ?? '').trim()
+              if (draft === '') return
+              void run(
+                { action: 'add', file: file.key, content: draft },
+                () => { setAddDrafts(current => ({ ...current, [file.key]: '' })) },
+              )
+            }}
+          />
+        ))}
+      </div>
     </div>
   )
 }
