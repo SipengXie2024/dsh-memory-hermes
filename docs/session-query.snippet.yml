@@ -1,0 +1,27 @@
+# session-query 启用片段(可选,与记忆插件互补:记忆 = 策划事实,session
+# 搜索 = 原始历史全文检索)。
+#
+# 用法:把下面两段追加进 profile 的用户层 patch:
+#   $DSH_HOME/profiles/memory-lab/cordis.patch.yml
+# 新增插件行属结构变更,改完重启 dsh。
+#
+# 授权边界(核实自 tool-session-query/src/workspace-access.ts):搜索范围
+# 严格等于调用方 workspace,按 session cwd 精确字符串相等匹配——换目录
+# 开的 session 搜不到别的目录的历史,这是刻意的。
+
+# —— 步骤 A:插入工具面(session_search 等 5 个工具;不随船,必须显式加)
+- insert:
+    - id: tool-session-query
+      name: '@deepseek-ai/dsh-tool-session-query'
+
+# —— 步骤 B:覆盖随船的 sqlite 索引后端。
+# base bundle 里它是 { path: ':memory:', openAt: never }(搜索被禁)。
+# id 覆盖整体替换 config,不深合并——两个字段都要写。
+# path 换成你的持久路径(正斜杠即可);不要指向 session-persistence 的库文件。
+# 若后续 dsh 版本给这行加了新配置字段,先 `dsh --profile memory-lab
+# --dump-config` 抄全再覆盖,避免整体替换把新字段打回默认。
+- id: session-query-sqlite
+  name: '@deepseek-ai/dsh-session-query-sqlite'
+  config:
+    path: 'C:/Users/<你>/.dsh/session-query.sqlite'
+    openAt: first-search

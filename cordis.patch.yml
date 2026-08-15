@@ -1,0 +1,5 @@
+# Bundle layer contributed by dsh-memory-hermes: one plugin row, no config —
+# schemastery defaults apply. Override per profile with an id-targeted patch.
+- insert:
+    - id: memory-hermes
+      name: dsh-memory-hermes
