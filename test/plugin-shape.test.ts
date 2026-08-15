@@ -77,19 +77,19 @@ describe('apply wiring', () => {
   it('wires every optional capability through inject scopes', () => {
     const { ctx, injected } = applyCtx()
     plugin.apply(ctx, {})
-    expect(injected).toEqual([['storageDomain'], ['llm'], ['sessionProjections'], ['commands']])
+    expect(injected).toEqual([['settings'], ['storageDomain'], ['llm'], ['sessionProjections'], ['commands']])
   })
 
   it('review wiring is unconditional — policy flags are read at fire time', () => {
     const { ctx, injected } = applyCtx()
     plugin.apply(ctx, { backgroundReview: false })
-    expect(injected).toEqual([['storageDomain'], ['llm'], ['sessionProjections'], ['commands']])
+    expect(injected).toEqual([['settings'], ['storageDomain'], ['llm'], ['sessionProjections'], ['commands']])
   })
 
   it('approval: true keeps the same wiring (the gate is a pre-execute listener)', () => {
     const { ctx, injected } = applyCtx()
     plugin.apply(ctx, { approval: true, backgroundReview: true })
-    expect(injected).toEqual([['storageDomain'], ['llm'], ['sessionProjections'], ['commands']])
+    expect(injected).toEqual([['settings'], ['storageDomain'], ['llm'], ['sessionProjections'], ['commands']])
   })
 
   it('installs the approval gate as a tools/pre-execute listener', () => {

@@ -32,7 +32,7 @@ import { createSnapshotSection } from './prompt.js'
 import { installReview } from './review.js'
 import type { ReviewControl, TokenMeterLike } from './review.js'
 import { createReviewLog } from './reviewlog.js'
-import { resolveConfigSource } from './settings.js'
+import { createConfigSource } from './settings.js'
 import { MemoryStore } from './store.js'
 import { buildMemoryTool } from './tool.js'
 
@@ -47,7 +47,7 @@ export function apply(ctx: Context, config: Config): void {
   // directly, outside Loader normalization (schemastery fills and validates).
   const loaderResolved = new Config(config) as Resolved
   const warn = (message: string): void => { ctx.logger.warn(message) }
-  const configSource = resolveConfigSource(ctx, loaderResolved, Config, warn)
+  const configSource = createConfigSource(ctx, loaderResolved, Config, warn)
 
   const initial = configSource.get()
   const store = new MemoryStore({
