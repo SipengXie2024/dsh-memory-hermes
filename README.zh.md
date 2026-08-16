@@ -148,7 +148,7 @@ skill 库只进不出会退化成一堆一次性窄条目。v4 移植 Hermes 的
 - **`/memory`**:输出两文件用量头与条目全文(任意端)。
 - **`/memory review [focus]`**:立刻对当前会话跑一次后台 review(绕过触发策略,记为 manual);focus 文本会追加进 review 指令(对齐 Hermes 的 /refine 聚焦语义),如 `/memory review 把刚才的调试过程存成 skill`。
 - **`/memory skills`**:列出 skill 库(名称 + 描述 + user-owned 标记 + 遥测列 `[use=N state=… pinned]`)。
-- **`/memory compact`**:一次 LLM 调用产出合并方案,经 dsh 审批服务**人审**通过后整体重写两文件(store.rewrite,同锁内原子写路径);无审批渠道时只展示方案不落盘。
+- **`/memory compact`**:一次 LLM 调用产出合并方案并**直接应用**(store.rewrite,同锁内原子写路径)——跑这条命令本身就是授权,没有审批环节;回复里给出前后条目数与用量对比。方案畸形或安全扫描命中时一个字不写。
 - **`/memory curator`**:立刻跑一次库维护 pass(绕过 idle/interval 门,与调度触发互斥);回复里带 sweep 结果、动作计数、快照位置。
 - **`/memory curator status`**:上次 run/下次预计/最近用户活跃/库形状(curator-managed、stale、pinned、user-owned 各几个)。
 - **`/memory pin <名字>` / `/memory unpin <名字>`**:置顶豁免——pinned 的 skill 跳过 stale 标记、LLM pass 硬规则禁碰。

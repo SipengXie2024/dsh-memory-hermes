@@ -1,10 +1,10 @@
 /**
- * /memory compact: human-reviewed consolidation of the two bounded files.
- * One auxiliary LLM call proposes merged entry lists; the proposal is shown
- * to the user through the dsh approval service and only an explicit allow
- * rewrites the files (store.rewrite, same locked/atomic path as mutate).
- * This is the proactive sibling of the overflow error's same-turn
- * consolidation recovery — cheaper than waiting for the file to fill.
+ * /memory compact: consolidation of the two bounded files. One auxiliary
+ * LLM call proposes merged entry lists which are applied directly
+ * (store.rewrite, same locked/atomic path as mutate) — running the command
+ * IS the authorization; there is no approval step. This is the proactive
+ * sibling of the overflow error's same-turn consolidation recovery —
+ * cheaper than waiting for the file to fill.
  *
  * @module dsh-memory-hermes/compact
  */
@@ -19,16 +19,6 @@ import { usageHeader } from './errors.js'
 import { scan } from './scan.js'
 import type { ConfigSource } from './settings.js'
 import type { MemoryStore } from './store.js'
-
-/** Structural view of the optional dsh approval seam (`ctx.get('approval')`). */
-export interface ApprovalLike {
-  request(request: {
-    agent: Agent
-    toolName: string
-    reason?: string
-    signal?: AbortSignal
-  }): Promise<'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'>
-}
 
 export interface Consolidation {
   readonly memory: readonly string[]
@@ -76,7 +66,6 @@ export function parseConsolidation(text: string): Consolidation {
 export interface CompactDeps {
   readonly store: MemoryStore
   readonly configSource: ConfigSource
-  readonly getApproval: () => ApprovalLike | undefined
 }
 
 interface SessionsLike {
@@ -88,7 +77,7 @@ interface LlmLike {
 }
 
 /**
- * Run one human-reviewed compaction for the agent's session. Returns the
+ * Run one compaction for the agent's session and apply it. Returns the
  * report text the /memory compact command replies with; never throws for
  * business failures (they are reported, nothing is written).
  */
@@ -153,22 +142,6 @@ export async function runCompact(
     }
   }
 
-  const reason = `memory compact: MEMORY.md ${before.memory.entries.length} -> ${consolidation.memory.length} entries, `
-    + `USER.md ${before.user.entries.length} -> ${consolidation.user.length} entries`
-  const proposal = ['## MEMORY.md', serializeEntries([...consolidation.memory]).trimEnd(), '', '## USER.md', serializeEntries([...consolidation.user]).trimEnd()].join('\n')
-  const approval = deps.getApproval()
-  if (approval === undefined) {
-    return `Proposed consolidation (NOT applied — no approval channel is available):\n${reason}\n\n${proposal}`
-  }
-  let outcome: 'allowed-once' | 'rejected' | 'cancelled' | 'unavailable'
-  try {
-    outcome = await approval.request({ agent, toolName: 'memory', reason, ...signal === undefined ? {} : { signal } })
-  } catch {
-    outcome = 'unavailable'
-  }
-  if (outcome !== 'allowed-once') {
-    return `Compaction ${outcome === 'rejected' ? 'declined' : outcome}; nothing was written.\n\n${proposal}`
-  }
   try {
     const memoryResult = await deps.store.rewrite('memory', consolidation.memory)
     const userResult = await deps.store.rewrite('user', consolidation.user)

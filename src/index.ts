@@ -22,7 +22,6 @@ import type {} from '@deepseek-ai/dsh-system-prompt'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { installMemoryCommand } from './command.js'
 import { runCompact } from './compact.js'
-import type { ApprovalLike } from './compact.js'
 import { Config } from './config.js'
 import type { Resolved } from './config.js'
 import { countLibrary, createSkillAdmin, renderCuratorOutcome, renderCuratorStatus } from './curator/admin.js'
@@ -124,11 +123,7 @@ export function apply(ctx: Context, config: Config): void {
   installMemoryCommand(ctx, store, {
     triggerReview: (agent, focus) => { reviewControl?.triggerNow(agent, focus) },
     listSkills: () => skillAdmin.list(),
-    runCompact: (agent, signal) => runCompact(ctx, {
-      store,
-      configSource,
-      getApproval: () => ctx.get('approval') as ApprovalLike | undefined,
-    }, agent, signal),
+    runCompact: (agent, signal) => runCompact(ctx, { store, configSource }, agent, signal),
     curatorRun: async () => {
       if (curatorControl === undefined) return 'The curator is not wired in this profile.'
       return renderCuratorOutcome(await curatorControl.triggerNow(), configSource.get().curatorConsolidate)
