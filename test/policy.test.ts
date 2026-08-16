@@ -39,3 +39,26 @@ describe('decidePreExecute', () => {
     expect(decidePreExecute({ name: 'shell', arguments: {} }, true)).toBeUndefined()
   })
 })
+
+describe('decidePreExecute — memory_topic', () => {
+  it('whitelists read actions', () => {
+    expect(decidePreExecute({ name: 'memory_topic', arguments: { action: 'topic_read', name: 'a' } }, true)).toBeUndefined()
+    expect(decidePreExecute({ name: 'memory_topic', arguments: { action: 'topic_list' } }, true)).toBeUndefined()
+  })
+
+  it('asks for mutating actions, including unknown future ones', () => {
+    const decision = decidePreExecute({ name: 'memory_topic', arguments: { action: 'topic_write', name: 'a', content: 'x' } }, true)
+    expect(decision?.kind).toBe('ask')
+    expect(decision).toEqual({ kind: 'ask', reason: 'memory_topic topic_write topics/a.md: "x"' })
+    expect(decidePreExecute({ name: 'memory_topic', arguments: { action: 'topic_future' } }, true)?.kind).toBe('ask')
+  })
+
+  it('delegates without asking when topics are disabled (execute refuses next)', () => {
+    expect(decidePreExecute({ name: 'memory_topic', arguments: { action: 'topic_write', name: 'a', content: 'x' } }, true, false))
+      .toBeUndefined()
+  })
+
+  it('delegates everything when the gate is off', () => {
+    expect(decidePreExecute({ name: 'memory_topic', arguments: { action: 'topic_remove', name: 'a' } }, false)).toBeUndefined()
+  })
+})

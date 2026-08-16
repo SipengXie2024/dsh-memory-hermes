@@ -31,7 +31,7 @@ describe('MemoryHermesGateway wiring', () => {
   it('binds the wire namespace and marks the Remote methods', () => {
     expect(gateway.typertRemote.namespace).toBe(GATEWAY_NAMESPACE)
     const markers = remoteMethods(gateway)
-    expect(markers.map(marker => marker.method).sort()).toEqual(['list', 'listReviewRuns', 'listSkills', 'mutate'])
+    expect(markers.map(marker => marker.method).sort()).toEqual(['list', 'listReviewRuns', 'listSkills', 'listTopics', 'mutate'])
   })
 })
 
@@ -48,6 +48,29 @@ describe('MemoryHermesGateway.listSkills', () => {
     // User-owned skills are filtered out — the panel shows curator output only.
     expect(skills).toEqual([
       { name: 'dsh-plugin-workflow', description: 'UI 落位与打包', curatorManaged: true },
+    ])
+  })
+})
+
+describe('MemoryHermesGateway.listTopics', () => {
+  it('answers empty without a topic layer, and marks orphans with one', async () => {
+    expect((await gateway.listTopics()).topics).toEqual([])
+    const withTopics = new MemoryStore({
+      files: {
+        memory: { path: join(dir, 'MEMORY.md'), label: 'MEMORY.md', limit: 2200 },
+        user: { path: join(dir, 'USER.md'), label: 'USER.md', limit: 1375 },
+      },
+      securityScan: true,
+      topics: { dir: join(dir, 'topics'), maxBytes: 32768, maxFiles: 100 },
+    })
+    await withTopics.writeTopic('linked-topic', 'x')
+    await withTopics.writeTopic('lonely-topic', 'y')
+    await withTopics.mutate('memory', { action: 'add', content: '细节 → topics/linked-topic.md' })
+    const gw = new MemoryHermesGateway(new Context(), withTopics)
+    const { topics } = await gw.listTopics()
+    expect(topics).toEqual([
+      { name: 'linked-topic', bytes: 1, orphan: false },
+      { name: 'lonely-topic', bytes: 1, orphan: true },
     ])
   })
 })

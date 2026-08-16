@@ -39,6 +39,7 @@ import { createConfigSource } from './settings.js'
 import { CuratorSkillStore } from './skills/store.js'
 import { MemoryStore } from './store.js'
 import { buildMemoryTool } from './tool.js'
+import { buildTopicTool } from './topics.js'
 
 export const name = 'memory-hermes'
 export const inject = ['tools', 'systemPrompt']
@@ -68,6 +69,11 @@ export function apply(ctx: Context, config: Config): void {
       },
     },
     securityScan: initial.securityScan,
+    topics: {
+      dir: initial.topicRoot ?? dshHomePath('memory', 'topics'),
+      maxBytes: initial.topicMaxBytes,
+      maxFiles: initial.topicMaxFiles,
+    },
   })
   // Live tunables: a settings commit retunes limits and the scan without a
   // restart (frozen per-session prompt snapshots keep what they rendered).
@@ -75,11 +81,24 @@ export function apply(ctx: Context, config: Config): void {
     store.setLimit('memory', next.memoryCharLimit)
     store.setLimit('user', next.userCharLimit)
     store.setSecurityScan(next.securityScan)
+    store.setTopicLimits(next.topicMaxBytes, next.topicMaxFiles)
   })
 
-  ctx.systemPrompt.section(createSnapshotSection(store, () => configSource.get().securityScan))
+  ctx.systemPrompt.section(createSnapshotSection(
+    store,
+    () => configSource.get().securityScan,
+    () => ({ enabled: configSource.get().topicsEnabled, dir: store.topicDir() }),
+  ))
   ctx.tools.register(defineTool(buildMemoryTool({
     store,
+    securityScan: () => configSource.get().securityScan,
+  })))
+  ctx.tools.register(defineTool(buildTopicTool({
+    store,
+    tunables: () => {
+      const c = configSource.get()
+      return { topicsEnabled: c.topicsEnabled, topicReadLines: c.topicReadLines, topicReadMaxBytes: c.topicReadMaxBytes }
+    },
     securityScan: () => configSource.get().securityScan,
   })))
   installApprovalPolicy(ctx, configSource)

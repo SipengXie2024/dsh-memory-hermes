@@ -30,6 +30,21 @@ describe('renderSnapshot', () => {
     expect(text).toContain('(empty — nothing saved yet)')
   })
 
+  it('includes the topic-layer paragraph only when a topics dir is given', () => {
+    const without = renderSnapshot(both(snapshot()), true)
+    expect(without).not.toContain('Topic files')
+    const withTopics = renderSnapshot(both(snapshot()), true, String.raw`C:\Users\x\.dsh\memory\topics`)
+    expect(withTopics).toContain('### Topic files (the detail layer)')
+    expect(withTopics).toContain(String.raw`C:\Users\x\.dsh\memory\topics`)
+    expect(withTopics).toContain('→ topics/<name>.md')
+    expect(withTopics).toContain('always this relative form')
+  })
+
+  it('the base guidance protects topic pointers during consolidation', () => {
+    const text = renderSnapshot(both(snapshot()), true)
+    expect(text).toContain('always keep the pointer when consolidating')
+  })
+
   it('renders entries as bullets with live usage in the header', () => {
     const text = renderSnapshot(both(snapshot({ entries: ['fact one', 'fact two'], chars: 22 })), true)
     expect(text).toContain('### MEMORY.md — agent notes [1% — 22/2,200 chars]')

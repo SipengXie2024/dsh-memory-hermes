@@ -57,6 +57,8 @@ export const reviewRunSchema = z.object({
   /** Fork steps used (LLM calls in the loop). */
   steps: z.number().int().optional(),
   skillActions: skillActionCountsSchema.optional(),
+  /** Topic files mutated this pass (names only; content never lands here). */
+  topics: z.array(z.string()).optional(),
   /** Per-step tool-call trace lines (bounded), for the activity tab. */
   trace: z.array(z.string()).optional(),
   /** Truncated text of each applied write. */

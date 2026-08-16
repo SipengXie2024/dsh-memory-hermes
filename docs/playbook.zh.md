@@ -227,6 +227,24 @@ dsh --profile web --dump-config
 
 **排查**:trace 只有 skills_list 没有 create → 模型判断"Nothing to save"(弱模型在库全是 user-owned 时会保守),用 `/memory review <focus>` 点名让它建;`/memory skills` 可随时看库。
 
+## 13.5 主题文件细节层(v5 新增)
+
+前置:`topicsEnabled` 保持默认(true)。
+
+1. 会话里输入:`/memory review 把刚才聊的部署拓扑细节存成主题文件并在索引里挂指针`(focus 点名)。
+2. 等活动页签出现这条 review 记录(摘要应有「写了 1 个主题文件」)。
+3. ```bash
+   dir %USERPROFILE%\.dsh\memory\topics
+   type %USERPROFILE%\.dsh\memory\MEMORY.md
+   ```
+
+**预期**:topics/ 下出现 `<名字>.md`(多行细节);MEMORY.md 新增一条**单行**条目,行尾是 `→ topics/<名字>.md`。
+
+4. 前台读回:让模型「读一下 deploy-topology 主题文件」→ 它应调 `memory_topic` 的 `topic_read`;文件超过 400 行时应有截断提示并会用 offset 续读。
+5. `/memory topics`:列出文件;手工把 MEMORY.md 里那条指针条目删掉再跑一次,该文件应标 `[orphan]`。
+
+**闸验证**:让模型「删掉 xxx 主题文件」而它没读过 → 应被拒(read-before-write);让它「读完后删掉」→ 先完整读,再删成功。
+
 ## 14. 设置页与人审合并(web)
 
 1. `dsh web` 启动(等价于 `dsh --profile web`;`--port` 可换端口)。

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -69,6 +69,11 @@ const DEFAULTS: Resolved = {
   curatorMaxTokens: 4000,
   curatorTimeoutMs: 300_000,
   curatorMaxBackups: 5,
+  topicsEnabled: true,
+  topicMaxBytes: 32768,
+  topicMaxFiles: 100,
+  topicReadLines: 400,
+  topicReadMaxBytes: 8192,
 }
 
 const sourceOf = (over: Partial<Resolved> = {}) => fixedConfigSource({ ...DEFAULTS, ...over })
@@ -762,5 +767,79 @@ describe('installReview', () => {
     emit('session/event', session, turnEnd(1))
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(record).toHaveLength(2)
+  })
+})
+
+// ---- topic detail layer in the fork -----------------------------------------
+
+describe('review fork × topic layer', () => {
+  const signal = () => new AbortController().signal
+
+  /** A store with the topic layer wired (the default fixture store lacks it). */
+  const topicStore = () => new MemoryStore({
+    files: {
+      memory: { path: join(dir, 'MEMORY.md'), label: 'MEMORY.md', limit: 200 },
+      user: { path: join(dir, 'USER.md'), label: 'USER.md', limit: 100 },
+    },
+    securityScan: true,
+    topics: { dir: join(dir, 'topics'), maxBytes: 32768, maxFiles: 100 },
+  })
+
+  const topicDeps = (over: Partial<Resolved> = {}): ReviewDeps => ({
+    store: topicStore(),
+    configSource: sourceOf(over),
+  })
+
+  const instructionOf = (calls: Record<string, unknown>[]): string => {
+    const messages = calls[0]!.messages as { content: { type: string; text?: string }[] }[]
+    const last = messages.at(-1)!
+    return last.content.map(block => block.text ?? '').join('')
+  }
+
+  it('appends the topic addendum when the layer is wired and enabled', async () => {
+    const { ctx, calls } = reviewCtx([[...textChunks(0, 'NOTHING'), ...finishChunk('stop')]])
+    await reviewOnce(ctx, topicDeps({ skillReview: false }), { session: fakeSession(), signal: signal() })
+    expect(instructionOf(calls)).toContain('memory_topic tool')
+    expect(instructionOf(calls)).toContain('→ topics/<name>.md')
+  })
+
+  it('withholds the addendum when topicsEnabled is false', async () => {
+    const { ctx, calls } = reviewCtx([[...textChunks(0, 'NOTHING'), ...finishChunk('stop')]])
+    await reviewOnce(ctx, topicDeps({ skillReview: false, topicsEnabled: false }), { session: fakeSession(), signal: signal() })
+    expect(instructionOf(calls)).not.toContain('memory_topic')
+  })
+
+  it('withholds the addendum when the store has no topic layer', async () => {
+    const { ctx, calls } = reviewCtx([[...textChunks(0, 'NOTHING'), ...finishChunk('stop')]])
+    await reviewOnce(ctx, depsOf({ skillReview: false }), { session: fakeSession(), signal: signal() })
+    expect(instructionOf(calls)).not.toContain('memory_topic')
+  })
+
+  it('writes a topic file and a pointer entry in one pass; counts stay memory-only', async () => {
+    const { ctx } = reviewCtx([
+      [
+        ...toolCallChunks(0, { action: 'topic_write', name: 'deploy-topology', content: 'multi\nline detail' }, 'memory_topic'),
+        ...toolCallChunks(1, { action: 'add', file: 'memory', content: '部署拓扑 → topics/deploy-topology.md' }),
+        ...finishChunk(),
+      ],
+      DONE,
+    ])
+    const outcome = await reviewOnce(ctx, topicDeps({ skillReview: false }), { session: fakeSession(), signal: signal() })
+    expect(readFileSync(join(dir, 'topics', 'deploy-topology.md'), 'utf8')).toBe('multi\nline detail')
+    expect(outcome?.topics).toEqual(['deploy-topology'])
+    // Topic writes never inflate the memory counters or the entries feed.
+    expect(outcome?.applied).toBe(1)
+    expect(outcome?.entries).toEqual(['部署拓扑 → topics/deploy-topology.md'])
+  })
+
+  it('topic calls fail soft when the layer is disabled', async () => {
+    const { ctx } = reviewCtx([
+      [...toolCallChunks(0, { action: 'topic_write', name: 'nope', content: 'x' }, 'memory_topic'), ...finishChunk()],
+      DONE,
+    ])
+    const outcome = await reviewOnce(ctx, topicDeps({ skillReview: false, topicsEnabled: false }), { session: fakeSession(), signal: signal() })
+    expect(outcome?.topics).toBeUndefined()
+    expect(outcome?.trace?.[0]).toContain('not available')
+    expect(existsSync(join(dir, 'topics'))).toBe(false)
   })
 })

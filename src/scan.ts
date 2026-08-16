@@ -88,3 +88,32 @@ export function scan(text: string): ScanHit | undefined {
   }
   return undefined
 }
+
+/**
+ * Rule subset for topic files (bulk, multi-line content read back only via
+ * an explicit `topic_read` tool result — the same trust position as an fs
+ * read of an ordinary file, which dsh does not scan at all). The line is
+ * drawn at covert-smuggling vs semantic rules:
+ * - kept: zero-width / bidi / tags (invisible to humans, visible to models);
+ * - kept: exfil.md-image (protects the HUMAN channel — a markdown preview of
+ *   the file would fetch the remote image);
+ * - dropped: invisible.control / invisible.line-sep (multi-line is the whole
+ *   point of a topic file), injection.* and exfil.send-url (semantic rules
+ *   with a high false-positive rate on technical notes, guarding a channel
+ *   that does not exist here).
+ */
+const BULK_RULE_IDS: readonly string[] = [
+  'invisible.zero-width',
+  'invisible.bidi',
+  'invisible.tags',
+  'exfil.md-image',
+]
+
+/** Scan bulk topic content; returns the first matching rule, or undefined. */
+export function scanBulk(text: string): ScanHit | undefined {
+  for (const rule of RULES) {
+    if (!BULK_RULE_IDS.includes(rule.ruleId)) continue
+    if (rule.pattern.test(text)) return { ruleId: rule.ruleId }
+  }
+  return undefined
+}

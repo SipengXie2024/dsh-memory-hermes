@@ -7,9 +7,9 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
-import type { PanelFile, PanelListResult, PanelMutateOutcome, PanelReviewRun, PanelReviewRunsResult, PanelSkill, PanelSkillsResult } from '../gateway.js'
+import type { PanelFile, PanelListResult, PanelMutateOutcome, PanelReviewRun, PanelReviewRunsResult, PanelSkill, PanelSkillsResult, PanelTopic, PanelTopicsResult } from '../gateway.js'
 import type { MemoryToolArgs } from '../tool.js'
-import { cleanErrorMessage, formatDuration, formatUsage, summarizeRun } from './logic.js'
+import { cleanErrorMessage, formatBytes, formatDuration, formatUsage, summarizeRun } from './logic.js'
 
 /** Business face injected by this package's register call. */
 export interface MemoryPanelFace {
@@ -17,6 +17,7 @@ export interface MemoryPanelFace {
   mutateMemory: (op: MemoryToolArgs) => Promise<PanelMutateOutcome>
   listReviewRuns: () => Promise<PanelReviewRunsResult>
   listSkills: () => Promise<PanelSkillsResult>
+  listTopics: () => Promise<PanelTopicsResult>
 }
 
 /** The thunk closes over the face; settings.section's only owner prop is
@@ -251,6 +252,34 @@ function ActivitySection({ runs }: { runs: readonly PanelReviewRun[] }): ReactNo
   )
 }
 
+/** Files-tab block: the topic detail layer (read-only; view via the tool or disk). */
+function TopicsSection({ topics }: { topics: readonly PanelTopic[] }): ReactNode {
+  return (
+    <section>
+      <h3 style={styles.group}>
+        <span>主题文件</span>
+        <span style={styles.usageText}>{`${topics.length} 个(细节层,按需读)`}</span>
+      </h3>
+      <ul style={styles.entryList}>
+        {topics.map(topic => (
+          <li key={topic.name} style={styles.entry}>
+            <span style={styles.entryText}>{topic.name}</span>
+            <span style={styles.usageText}>{formatBytes(topic.bytes)}</span>
+            {topic.orphan && (
+              <span
+                style={{ ...styles.usageText, color: 'var(--dsw-alias-state-warn-label, var(--dsw-alias-state-error-primary))' }}
+                title="没有任何索引条目引用它,未来的会话发现不了"
+              >
+                孤儿
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
 /** Skills tab: what the background review has curated so far. */
 function SkillsSection({ skills }: { skills: readonly PanelSkill[] }): ReactNode {
   if (skills.length === 0) return <p style={styles.note}>还没有沉淀的 skill——等后台 review 从对话里提炼,或用 /memory review 点名让它建。</p>
@@ -277,11 +306,12 @@ function SkillsSection({ skills }: { skills: readonly PanelSkill[] }): ReactNode
 }
 
 /** The settings page body: usage meters, entries, and edit controls. */
-export function MemoryPanel({ listMemory, mutateMemory, listReviewRuns, listSkills }: MemoryPanelProps): ReactNode {
+export function MemoryPanel({ listMemory, mutateMemory, listReviewRuns, listSkills, listTopics }: MemoryPanelProps): ReactNode {
   const [tab, setTab] = useState<'files' | 'skills' | 'activity'>('files')
   const [data, setData] = useState<PanelListResult | undefined>(undefined)
   const [runs, setRuns] = useState<readonly PanelReviewRun[] | undefined>(undefined)
   const [skills, setSkills] = useState<readonly PanelSkill[] | undefined>(undefined)
+  const [topics, setTopics] = useState<readonly PanelTopic[] | undefined>(undefined)
   const [loadError, setLoadError] = useState<string | undefined>(undefined)
   const [actionError, setActionError] = useState<string | undefined>(undefined)
   const [busy, setBusy] = useState(false)
@@ -292,14 +322,15 @@ export function MemoryPanel({ listMemory, mutateMemory, listReviewRuns, listSkil
   const refresh = useCallback(async () => {
     try {
       setLoadError(undefined)
-      const [filesResult, runsResult, skillsResult] = await Promise.all([listMemory(), listReviewRuns(), listSkills()])
+      const [filesResult, runsResult, skillsResult, topicsResult] = await Promise.all([listMemory(), listReviewRuns(), listSkills(), listTopics()])
       setData(filesResult)
       setRuns(runsResult.runs)
       setSkills(skillsResult.skills)
+      setTopics(topicsResult.topics)
     } catch (error) {
       setLoadError(errorMessage(error))
     }
-  }, [listMemory, listReviewRuns, listSkills])
+  }, [listMemory, listReviewRuns, listSkills, listTopics])
 
   useEffect(() => {
     void refresh()
@@ -386,6 +417,7 @@ export function MemoryPanel({ listMemory, mutateMemory, listReviewRuns, listSkil
             }}
           />
         ))}
+        {tab === 'files' && topics !== undefined && topics.length > 0 && <TopicsSection topics={topics} />}
       </div>
     </div>
   )

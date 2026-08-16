@@ -18,6 +18,7 @@ import { scan } from './scan.js'
 import type { MemoryFileKey, MemoryStore, MutateResult } from './store.js'
 import { validateMemoryArgs } from './tool.js'
 import type { MemoryToolArgs } from './tool.js'
+import { isReferenced } from './topics.js'
 
 export const GATEWAY_NAMESPACE = 'memoryHermes'
 
@@ -68,6 +69,18 @@ export interface PanelSkill {
 
 export interface PanelSkillsResult {
   readonly skills: readonly PanelSkill[]
+}
+
+/** One topic-file row for the panel's files tab. */
+export interface PanelTopic {
+  readonly name: string
+  readonly bytes: number
+  /** No index entry references this file — invisible to future sessions. */
+  readonly orphan: boolean
+}
+
+export interface PanelTopicsResult {
+  readonly topics: readonly PanelTopic[]
 }
 
 /** Structural view of the skill store's list seam. */
@@ -146,6 +159,21 @@ export class MemoryHermesGateway extends TypertRemoteService {
           },
         }
       }),
+    }
+  }
+
+  @Remote('listTopics')
+  async listTopics(): Promise<PanelTopicsResult> {
+    if (!this.store.hasTopics()) return { topics: [] }
+    const snapshots = this.store.readAllSync()
+    const indexText = [...snapshots.memory.entries, ...snapshots.user.entries].join('\n')
+    const topics = await this.store.listTopics()
+    return {
+      topics: topics.map(topic => ({
+        name: topic.name,
+        bytes: topic.bytes,
+        orphan: !isReferenced(topic.name, indexText),
+      })),
     }
   }
 }

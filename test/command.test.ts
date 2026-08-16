@@ -110,4 +110,31 @@ describe('installMemoryCommand', () => {
     expect((await handler({ rawInput: 'pin  ' })).text).toContain('Usage')
     expect((await handler({ rawInput: 'unknown-subcommand' })).text).toContain('/memory curator')
   })
+
+  it('/memory topics lists files with orphan markers', async () => {
+    const topicStore = new MemoryStore({
+      files: {
+        memory: { path: join(dir, 'MEMORY.md'), label: 'MEMORY.md', limit: 2200 },
+        user: { path: join(dir, 'USER.md'), label: 'USER.md', limit: 1375 },
+      },
+      securityScan: true,
+      topics: { dir: join(dir, 'topics'), maxBytes: 32768, maxFiles: 100 },
+    })
+    const { ctx, registered } = commandCtx()
+    installMemoryCommand(ctx, topicStore)
+    const handler = registered[0].handler
+    expect((await handler({ rawInput: 'topics' })).text).toBe('(no topic files yet)')
+    await topicStore.writeTopic('linked-topic', 'x')
+    await topicStore.writeTopic('lonely-topic', 'y')
+    await topicStore.mutate('memory', { action: 'add', content: '细节 → topics/linked-topic.md' })
+    const text = (await handler({ rawInput: 'topics' })).text
+    expect(text).toContain('- linked-topic (1 B)')
+    expect(text).toContain('- lonely-topic (1 B) [orphan')
+  })
+
+  it('/memory topics reports a missing topic layer', async () => {
+    const { ctx, registered } = commandCtx()
+    installMemoryCommand(ctx, store)
+    expect((await registered[0].handler({ rawInput: 'topics' })).text).toContain('not wired')
+  })
 })

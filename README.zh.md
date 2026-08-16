@@ -93,6 +93,12 @@ memory-hermes:
     curatorMaxBackups: 5         # run 前快照保留份数(轮替删最老)
     # curatorProvider: deepseek  # curator 换模型用;缺省回落 reviewProvider/Model,再回落会话默认模型
     # curatorModel: deepseek-chat
+    topicsEnabled: true          # v5:主题文件细节层(关 = 动作运行时拒绝,schema 需重载插件才变)
+    topicMaxBytes: 32768         # 单个主题文件存储上限(字节),最小 4096
+    topicMaxFiles: 100           # 主题文件数量上限
+    topicReadLines: 400          # topic_read 默认(也是最大)行窗
+    topicReadMaxBytes: 8192      # topic_read 单次读出字节帽
+    # topicRoot: C:/Users/<你>/.dsh/memory/topics  # 主题目录覆盖;默认 $DSH_HOME/memory/topics
 ```
 
 注意:id 覆盖是**整体替换 config,不深合并**——要改就把想要的字段写全(未写的字段回 schema 默认,恰好也是安全的)。
@@ -139,15 +145,29 @@ skill 库只进不出会退化成一堆一次性窄条目。v4 移植 Hermes 的
 
 与 Hermes 的两处**有意偏离**:归并 pass 默认**开**(Hermes 默认关——我们的定位是无人审查的自动库,靠快照+read-before-write 兜底而非人审);**无 archive 层**,delete 就是真删(Hermes 的 `.archive/` 90 天档在无人审查前提下是死重)。
 
+## 主题文件(渐进式披露细节层,v5)
+
+注入侧本来已是渐进式(条目一行一条,索引即全文)。v5 补的是**索引后面的那一层**(蓝本:Claude Code auto memory——MEMORY.md 索引每会话只注前 200 行/25KB,主题文件按需读,2026-08-16 官方文档核实):
+
+- **结构**:`~/.dsh/memory/topics/<名字>.md`(kebab-case 命名)。细节(命令示例、排错叙事、部署拓扑)写进主题文件;索引条目保持一行,行尾挂指针 `→ topics/<名字>.md`。**主题文件不进系统提示**,模型按需用 `memory_topic` 工具的 `topic_read` 读。
+- **`memory_topic` 工具**五动作:`topic_list` / `topic_read` / `topic_write` / `topic_append` / `topic_remove`。与 `memory` 工具分立(dsh 输出 schema 方言限制,且读写契约更干净)。
+- **读出默认有界**:`topic_read` 默认返回前 `topicReadLines`(400)行 + `topicReadMaxBytes`(8192)字节帽,截断会教模型用 `offset=N` 续读(1-based,对齐 dsh read 工具)。存储上限(32768)和读出上限是两个数。
+- **分级 read-before-write 闸**:覆盖已存在文件、删除,要求本上下文先**完整读**过(截断读不开闸,报错教「读完剩余部分再重试」);追加只需任意读过;新建免读;**写入即知情**(topic_write 后该文件算完全知情,append 不升级)。粒度:前台按会话、后台 fork 按 run。闸的补偿效应:被删/被覆盖的正文必然完整进过会话日志,误删可从 session log 人工捞回——这是主题层不上快照的底气。
+- **扫描是子集**(`scanBulk`):主题内容只在显式 topic_read 时以工具结果出现(与 fs 读普通文件同级,dsh fs 读零扫描),所以条目扫描里的语义规则(injection.*、exfil.send-url)和多行禁令不作用于主题文件;保留的只有隐蔽夹带三规则(zero-width/bidi/tags)和 exfil.md-image(防的是人——markdown 预览会拉远程图;报错教改成普通链接)。
+- **指针保全**:compact 指令、溢出报错、GUIDANCE 三处都写明「`→ topics/<name>.md` 结尾的条目是索引指针,合并时必须保留」——否则压缩会把指针条目当普通条目丢掉,细节文件变孤儿。孤儿(没有任何索引引用的主题文件)在 `/memory topics` 和设置页文件页签可见。
+- **review fork 自动获得**:fork 的工具面来自会话 header,工具注册即到位;review 指令在 topicsEnabled 时追加一段 TOPIC_ADDENDUM(两个正例一个反例:部署拓扑→主题文件;怎么调试一类崩溃→skill references,不是主题文件)。
+- 索引预算 2200/1375 **不动**——溢出压力正是把细节赶进主题层的动力。
+
 ## 设置页与 /memory 命令
 
 - **设置页**:dsh web 设置导航里的「记忆」页(settings.section 注册),三个页签:
-  - **文件**:MEMORY.md / USER.md 两区,各带用量条与条目列表;条目可内联编辑、两击确认删除、输入框新增。面板编辑**不走审批闸、不受扫描拒写**(操作者就是审批人);会被扫描命中的条目带三角警示标记,仅提示不拦截。
+  - **文件**:MEMORY.md / USER.md 两区,各带用量条与条目列表;条目可内联编辑、两击确认删除、输入框新增;尾部列主题文件清单(名称/大小/孤儿徽标,只读)。面板编辑**不走审批闸、不受扫描拒写**(操作者就是审批人);会被扫描命中的条目带三角警示标记,仅提示不拦截。
   - **技能**:后台 review 沉淀的 curator skill 一览(只显示 `created_by: agent` 的;你手写的 skill 不属于这里),v4 起每行带遥测:用过几次/最近何时、沉寂(stale)标记、置顶(pinned)标记。
   - **活动**:后台 review 与 curator 记录列表(curator run 显示为「库维护」)。每条一行摘要(时间、类型、人话结论:存了几条/动了哪些 skill/没有新内容)+ 人性化时长;失败行只显示清理后的错误单行(嵌套 JSON 已解开);逐步工具调用 trace 收在「过程(N 步)」折叠里,Refresh 拉取。
 - **`/memory`**:输出两文件用量头与条目全文(任意端)。
 - **`/memory review [focus]`**:立刻对当前会话跑一次后台 review(绕过触发策略,记为 manual);focus 文本会追加进 review 指令(对齐 Hermes 的 /refine 聚焦语义),如 `/memory review 把刚才的调试过程存成 skill`。
 - **`/memory skills`**:列出 skill 库(名称 + 描述 + user-owned 标记 + 遥测列 `[use=N state=… pinned]`)。
+- **`/memory topics`**:列出主题文件(名称 + 大小),没有任何索引条目引用的标 `[orphan]`。
 - **`/memory compact`**:一次 LLM 调用产出合并方案并**直接应用**(store.rewrite,同锁内原子写路径)——跑这条命令本身就是授权,没有审批环节;回复里给出前后条目数与用量对比。方案畸形或安全扫描命中时一个字不写。
 - **`/memory curator`**:立刻跑一次库维护 pass(绕过 idle/interval 门,与调度触发互斥);回复里带 sweep 结果、动作计数、快照位置。
 - **`/memory curator status`**:上次 run/下次预计/最近用户活跃/库形状(curator-managed、stale、pinned、user-owned 各几个)。
@@ -175,6 +195,7 @@ ctx.tools.restrict({ deny: ['memory'] })
 ## 数据与卸载
 
 - 记忆数据:`$DSH_HOME/memory/MEMORY.md` 与 `USER.md`。纯文本,每行一条 `- ` 前缀,可手工检查/编辑;手改在**下个 session** 生效。
+- 主题文件:`$DSH_HOME/memory/topics/<名字>.md`(v5 细节层)。纯文本,可手工检查/编辑/删除;删了记得把指向它的索引条目一并清掉(否则留下死指针,反之则成孤儿)。
 - skill 库:`$DSH_HOME/skills/`(dsh 自带用户根,与手写 skill 混居,靠 `created_by: agent` 区分管辖)。
 - curator 快照:`$DSH_HOME/skill-backups/<时间戳>/`(每次有损 run 前自动留,轮替保 `curatorMaxBackups` 份)。
 - review / curator 记录与使用遥测:storage-domain sidecar(`memory_hermes` 域,后端介质由 storage 层决定)。
@@ -194,6 +215,7 @@ ctx.tools.restrict({ deny: ['memory'] })
 - 溢出上限按 codepoint 计(与 Hermes 的 Python `len()` 一致);中文信息密度高,同字符数装得下更多事实,嫌紧可调大。
 - review 失败静默是取舍:后台调用出错只记日志与 sidecar,不重试,主对话永远不因 review 受影响;「没存上」在设置页活动页签可见。
 - review 的写入质量(存不存、存多准)取决于模型对 review 指令的遵守度,因模型而异;不满意就关掉或换 `reviewModel`。
+- `topicsEnabled` 的行为半边(动作运行时拒绝、review 不追加 addendum)热生效,但工具 schema 是 apply 时静态注册的——schema 半边(动作从工具列表消失)要重载插件才变。同理,minimal preset 的会话没有 GUIDANCE 段落(persona complete 抑制装配期追加),memory_topic 只能靠工具描述自行发现,与 memory 工具现状一致。
 - 面板刷新是拉取不是推送(dsh 的 client 推送通道是白名单制,插件进不去):别处写入(模型工具 / review / 另一进程)后,点 Refresh 或重开设置页才可见。
 - 插件**不**往 session 日志 append 自定义事件类型:dsh 的日志事件词汇是白名单制,未知类型会让整份日志重放被拒。自省可观测性走 sidecar,不走日志。
 

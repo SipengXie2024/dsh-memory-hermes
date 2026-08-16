@@ -46,14 +46,30 @@ locate an entry by a unique substring.
 Save: who the user is (persona, preferences, behavior expectations), durable
 environment facts and project state, conventions with lasting effect.
 Skip: secrets and credentials, one-off task state, anything trivially
-re-discoverable, speculation, bulk content (save a pointer to it instead).
+re-discoverable, speculation, bulk content (write that to a topic file and keep
+a one-line pointer here — see below).
 Techniques and workflow lessons do not belong here — a background review
 maintains those as skills in the skill library; reference them by name instead.
 
 Capacity is deliberately small. Above ~80% usage, consolidate before adding:
 merge overlapping entries, remove stale ones. An overflow error lists the
 current entries — consolidate and retry in the same turn without losing the
-new fact.`
+new fact. Entries ending in \`→ topics/<name>.md\` are index pointers to detail
+files — always keep the pointer when consolidating.`
+
+/** Detail-layer paragraph; rendered with the resolved on-disk location. */
+function topicGuidance(dir: string): string {
+  return `### Topic files (the detail layer)
+
+When a fact needs more room than one line — commands, examples, a debugging
+narrative — write the detail to a topic file with the \`memory_topic\` tool
+(topic_write / topic_append) and keep the index entry to one line ending in
+\`→ topics/<name>.md\` (always this relative form in the index, never an
+absolute path). Topic files are stored on disk at ${dir} and are NOT part of
+this snapshot: read them on demand with topic_read (a bounded window; use
+offset to continue). Every topic file must be referenced by at least one
+index entry, or it is invisible to future sessions.`
+}
 
 const FILE_TITLES: Readonly<Record<MemoryFileKey, string>> = {
   memory: 'MEMORY.md — agent notes',
@@ -82,15 +98,21 @@ function renderFile(key: MemoryFileKey, snapshot: FileSnapshot, securityScan: bo
 export function renderSnapshot(
   snapshots: Readonly<Record<MemoryFileKey, FileSnapshot>>,
   securityScan: boolean,
+  topicsDir?: string,
 ): string {
   return [
     GUIDANCE,
+    ...topicsDir === undefined ? [] : [topicGuidance(topicsDir)],
     renderFile('memory', snapshots.memory, securityScan),
     renderFile('user', snapshots.user, securityScan),
   ].join('\n\n')
 }
 
-export function createSnapshotSection(store: MemoryStore, securityScan: () => boolean): PromptSection {
+export function createSnapshotSection(
+  store: MemoryStore,
+  securityScan: () => boolean,
+  topics?: () => { enabled: boolean; dir: string },
+): PromptSection {
   const frozen = new WeakMap<Agent, string>()
   return {
     name: SECTION_NAME,
@@ -101,9 +123,14 @@ export function createSnapshotSection(store: MemoryStore, securityScan: () => bo
       if (agent === undefined) return ''
       let snapshot = frozen.get(agent)
       if (snapshot === undefined) {
-        // The flag is read at freeze time; a live settings change applies to
-        // the NEXT session's snapshot, not this one's frozen text.
-        snapshot = renderSnapshot(store.readAllSync(), securityScan())
+        // The flags are read at freeze time; a live settings change applies
+        // to the NEXT session's snapshot, not this one's frozen text.
+        const topicsState = topics?.()
+        snapshot = renderSnapshot(
+          store.readAllSync(),
+          securityScan(),
+          topicsState?.enabled === true ? topicsState.dir : undefined,
+        )
         frozen.set(agent, snapshot)
       }
       return snapshot

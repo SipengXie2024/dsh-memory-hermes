@@ -29,7 +29,9 @@ export interface Consolidation {
 export const CONSOLIDATE_INSTRUCTION = 'You are consolidating two small persistent memory files '
   + '(MEMORY.md: agent notes; USER.md: user profile). Merge overlapping entries, drop stale or '
   + 're-discoverable ones, and keep every durable fact, preference, convention, and pitfall fix. '
-  + 'Entries are single terse lines. Reply with EXACTLY two markdown sections and nothing else: '
+  + 'Entries are single terse lines. Entries ending in `→ topics/<name>.md` are index pointers '
+  + 'to detail files: keep the pointer — never drop or rewrite the `→ topics/...` suffix. '
+  + 'Reply with EXACTLY two markdown sections and nothing else: '
   + 'a "## MEMORY.md" heading followed by "- entry" lines, then a "## USER.md" heading followed '
   + 'by "- entry" lines. Keep a section present even when it ends up empty.'
 

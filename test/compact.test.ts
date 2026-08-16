@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { parseConsolidation, runCompact } from '../src/compact.js'
+import { CONSOLIDATE_INSTRUCTION } from '../src/compact.js'
 import type { CompactDeps } from '../src/compact.js'
 import type { Resolved } from '../src/config.js'
 import { fixedConfigSource } from '../src/settings.js'
@@ -53,6 +54,11 @@ const DEFAULTS: Resolved = {
   curatorMaxTokens: 4000,
   curatorTimeoutMs: 300_000,
   curatorMaxBackups: 5,
+  topicsEnabled: true,
+  topicMaxBytes: 32768,
+  topicMaxFiles: 100,
+  topicReadLines: 400,
+  topicReadMaxBytes: 8192,
 }
 
 const REPLY = '## MEMORY.md\n- uses pnpm\n- prefers Chinese docs\n\n## USER.md\n- speaks Chinese\n'
@@ -95,6 +101,11 @@ function depsOf(over: Partial<Resolved> = {}): CompactDeps {
 }
 
 describe('parseConsolidation', () => {
+  it('the instruction protects topic pointers from consolidation', () => {
+    expect(CONSOLIDATE_INSTRUCTION).toContain('→ topics/<name>.md')
+    expect(CONSOLIDATE_INSTRUCTION).toContain('keep the pointer')
+  })
+
   it('parses the two-section protocol', () => {
     expect(parseConsolidation(REPLY)).toEqual({
       memory: ['uses pnpm', 'prefers Chinese docs'],

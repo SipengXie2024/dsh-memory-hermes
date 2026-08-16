@@ -41,7 +41,10 @@ export function overflowError(state: FileState, attemptedChars: number): Harness
     + `${fmt(state.limit)} (currently ${usageHeader(state.chars, state.limit)}, `
     + `${state.entries.length} ${state.entries.length === 1 ? 'entry' : 'entries'}).\n`
     + 'Do NOT drop the new information. Consolidate in this same turn: merge overlapping '
-    + 'entries with replace, delete obsolete ones with remove, then retry.\n'
+    + 'entries with replace, delete obsolete ones with remove, then retry. Entries ending '
+    + 'in `→ topics/<name>.md` are index pointers to detail files — always keep the pointer '
+    + 'when consolidating. Detail that does not fit one line belongs in a topic file '
+    + '(memory_topic tool), not in the index.\n'
     + renderCurrentEntries(state),
     'MEMORY_OVERFLOW',
   )
@@ -126,5 +129,55 @@ export function lockBusyError(label: string, lockPath: string): HarnessError {
     + 'may be writing right now — retry shortly. If you are sure no other dsh process is '
     + `running, the lock is stale; ask the user to delete it by hand: ${lockPath}`,
     'MEMORY_LOCK_BUSY',
+  )
+}
+
+// -- Topic files (the progressive-disclosure detail layer) ------------------
+
+export function invalidTopicNameError(name: string): HarnessError {
+  return new HarnessError(
+    `Invalid topic name "${name}": use kebab-case (lowercase letters, digits, dashes) — `
+    + 'the file is topics/<name>.md.',
+    'MEMORY_TOPIC_INVALID_NAME',
+  )
+}
+
+export function topicNotFoundError(name: string, available: readonly string[]): HarnessError {
+  const list = available.length === 0 ? '(no topic files exist yet)' : available.map(n => `- ${n}`).join('\n')
+  return new HarnessError(
+    `Topic "${name}" does not exist. Existing topics:\n${list}`,
+    'MEMORY_TOPIC_NOT_FOUND',
+  )
+}
+
+/** A topic write/append would exceed the per-file byte cap. */
+export function topicTooLargeError(name: string, attemptedBytes: number, capBytes: number): HarnessError {
+  return new HarnessError(
+    `Topic "${name}" would be ${fmt(attemptedBytes)} bytes after this write, above the `
+    + `${fmt(capBytes)}-byte cap. Slim the file down first, or start a second file `
+    + `topics/${name}-2.md and add a second index pointer to it.`,
+    'MEMORY_TOPIC_TOO_LARGE',
+  )
+}
+
+/** Creating one more topic file would exceed the file-count cap. */
+export function topicStoreFullError(maxFiles: number): HarnessError {
+  return new HarnessError(
+    `The topic store already holds ${maxFiles} files (the cap). Merge related topics or `
+    + 'remove obsolete ones before creating more.',
+    'MEMORY_TOPIC_STORE_FULL',
+  )
+}
+
+/** scanBulk rejection; the md-image rule carries its own fix guidance. */
+export function scanBulkRejectedError(ruleId: string): HarnessError {
+  const fix = ruleId === 'exfil.md-image'
+    ? ' Change the remote image `![alt](url)` to a plain link `[alt](url)` and retry — the '
+      + 'content is kept, and a markdown preview can no longer fetch the remote URL.'
+    : ''
+  return new HarnessError(
+    `Write rejected by the memory security scan (${ruleId}).${fix} This scan is heuristic; `
+    + 'do not try to work around it.',
+    'MEMORY_SCAN_REJECTED',
   )
 }

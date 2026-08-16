@@ -76,6 +76,21 @@ export interface Config {
    * the host's current default model selection. */
   curatorProvider?: string
   curatorModel?: string
+  /** Topic detail layer (progressive disclosure): index entries stay one
+   * line, detail lives in $DSH_HOME/memory/topics/<name>.md files read on
+   * demand. Off = topic actions refuse at runtime and the review addendum
+   * is withheld (the tool schema itself only changes on plugin reload). */
+  topicsEnabled?: boolean
+  /** Per-topic-file byte cap (storage limit; the read window is separate). */
+  topicMaxBytes?: number
+  /** Maximum number of topic files. */
+  topicMaxFiles?: number
+  /** Topic directory override; defaults to `$DSH_HOME/memory/topics`. */
+  topicRoot?: string
+  /** Default (and maximum, unless offset/limit given) lines per topic_read. */
+  topicReadLines?: number
+  /** Byte cap for the selected lines of one topic_read call. */
+  topicReadMaxBytes?: number
 }
 
 /** Schemastery config; drives Loader defaults, settings UI, and config docs. */
@@ -111,10 +126,16 @@ export const Config: z<Config> = z.object({
   curatorMaxBackups: z.number().step(1).min(1).default(5),
   curatorProvider: z.string(),
   curatorModel: z.string(),
+  topicsEnabled: z.boolean().default(true),
+  topicMaxBytes: z.number().step(1).min(4096).default(32768),
+  topicMaxFiles: z.number().step(1).min(1).default(100),
+  topicRoot: z.string(),
+  topicReadLines: z.number().step(1).min(1).default(400),
+  topicReadMaxBytes: z.number().step(1).min(1024).default(8192),
 })
 
 /** Optional keys that carry no schema default (absent means "inherit"). */
-type OptionalKeys = 'reviewProvider' | 'reviewModel' | 'skillRoot' | 'curatorProvider' | 'curatorModel'
+type OptionalKeys = 'reviewProvider' | 'reviewModel' | 'skillRoot' | 'curatorProvider' | 'curatorModel' | 'topicRoot'
 
 /** Config with schema defaults applied; the model-override pairs and the
  * optional skill-root override stay optional. */

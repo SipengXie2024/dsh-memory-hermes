@@ -13,6 +13,7 @@ import type {} from '@deepseek-ai/dsh-commands'
 import { usageHeader } from './errors.js'
 import type { FileSnapshot, MemoryFileKey } from './store.js'
 import type { MemoryStore } from './store.js'
+import { formatKib, isReferenced } from './topics.js'
 
 const ORDER: readonly MemoryFileKey[] = ['memory', 'user']
 
@@ -46,6 +47,7 @@ export interface MemoryCommandExtras {
 
 const USAGE = 'Usage: /memory — show the memory files; /memory review [focus] — run a background '
   + 'review now; /memory compact — propose a human-reviewed consolidation; /memory skills — list the skill library; '
+  + '/memory topics — list topic files (the detail layer) with orphan markers; '
   + '/memory curator [status] — run the library-maintenance pass now / show its schedule; '
   + '/memory pin <name>, /memory unpin <name> — exempt a skill from automatic curation; '
   + '/memory adopt <name> — put a user-owned skill under curator management.'
@@ -57,11 +59,11 @@ export function installMemoryCommand(ctx: Context, store: MemoryStore, extras: M
   ctx.inject(['commands'], (scoped) => {
     scoped.commands.register({
       name: 'memory',
-      description: 'Show the persistent memory files; review/compact/skills/curator/pin/adopt for upkeep',
+      description: 'Show the persistent memory files; review/compact/skills/topics/curator/pin/adopt for upkeep',
       // Without an input declaration the web composer only claims bare
       // `/memory`; argued lines (e.g. `/memory curator`) fall through to the
       // model as plain chat text (ui-commands matchEnter decision table).
-      input: { hint: '[review [focus] | compact | skills | curator [status] | pin|unpin|adopt <name>]' },
+      input: { hint: '[review [focus] | compact | skills | topics | curator [status] | pin|unpin|adopt <name>]' },
       handler: async (invocation) => {
         const input = (invocation.rawInput ?? '').trim()
         if (input === '') {
@@ -87,6 +89,18 @@ export function installMemoryCommand(ctx: Context, store: MemoryStore, extras: M
           }
           const lines = await extras.listSkills()
           return { kind: 'success' as const, text: lines.length === 0 ? '(skill library is empty)' : lines.join('\n') }
+        }
+        if (input === 'topics') {
+          if (!store.hasTopics()) {
+            return { kind: 'success' as const, text: 'The topic layer is not wired in this profile.' }
+          }
+          const topics = await store.listTopics()
+          if (topics.length === 0) return { kind: 'success' as const, text: '(no topic files yet)' }
+          const snapshots = store.readAllSync()
+          const indexText = [...snapshots.memory.entries, ...snapshots.user.entries].join('\n')
+          const lines = topics.map(topic =>
+            `- ${topic.name} (${formatKib(topic.bytes)})${isReferenced(topic.name, indexText) ? '' : ' [orphan — no index entry references it]'}`)
+          return { kind: 'success' as const, text: lines.join('\n') }
         }
         if (input === 'curator status') {
           if (extras.curatorStatus === undefined) return { kind: 'success' as const, text: NOT_WIRED }

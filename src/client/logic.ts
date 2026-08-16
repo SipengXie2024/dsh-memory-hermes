@@ -34,6 +34,25 @@ export const LIST_SKILLS_CALL = {
   payload: { args: {} },
 } as const
 
+/** Call shape for MemoryHermesGateway.listTopics (no parameters). */
+export const LIST_TOPICS_CALL = {
+  channel: RPC_CHANNEL,
+  endpoint: 'memoryHermes/listTopics',
+  payload: { args: {} },
+} as const
+
+/** One topic-file row the panel renders. */
+export interface TopicRow {
+  readonly name: string
+  readonly bytes: number
+  readonly orphan: boolean
+}
+
+/** Human byte size for topic rows: `512 B` / `3.9 kB`. */
+export function formatBytes(bytes: number): string {
+  return bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(1)} kB`
+}
+
 /** Call shape for MemoryHermesGateway.mutate(op). */
 export function mutateCall(op: MemoryToolArgs): {
   channel: string
@@ -124,6 +143,8 @@ export interface RunSummaryInput {
   readonly malformed: number
   readonly foreign: number
   readonly steps?: number | undefined
+  /** Topic files mutated this pass (names only). */
+  readonly topics?: readonly string[] | undefined
   readonly skillActions?: {
     readonly created: number
     readonly updated: number
@@ -139,6 +160,9 @@ export interface RunSummaryInput {
 export function summarizeRun(run: RunSummaryInput): string {
   const parts: string[] = []
   if (run.applied > 0) parts.push(`存了 ${run.applied} 条记忆`)
+  if (run.topics !== undefined && run.topics.length > 0) {
+    parts.push(`写了 ${run.topics.length} 个主题文件(${run.topics.join(', ')})`)
+  }
   if (run.rejected > 0) parts.push(`${run.rejected} 条被拒`)
   if (run.malformed > 0) parts.push(`${run.malformed} 条参数畸形`)
   if (run.foreign > 0) parts.push(`${run.foreign} 次越界调用`)

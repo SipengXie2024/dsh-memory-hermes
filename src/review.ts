@@ -38,6 +38,8 @@ import type { CuratorSkillStore } from './skills/store.js'
 import type { SkillActionCounts, SkillMutationHooks } from './skills/tools.js'
 import type { MemoryStore } from './store.js'
 import { TOOL_NAME, validateMemoryArgs, writtenText } from './tool.js'
+import { renderTopicValue, TOPIC_TOOL_NAME, TopicTools } from './topics.js'
+import type { TopicToolArgs } from './topics.js'
 
 /** Memory-only prompt (skillReview off). Hermes' memory route is narrow by
  * design: user persona, preferences, behavior expectations, current state. */
@@ -161,6 +163,19 @@ export const HARVEST_COMBINED_INSTRUCTION = 'You are in a pre-compaction backgro
   + 'here is shown to them. Before compaction hides the details, update two things:\n\n'
   + COMBINED_REVIEW_INSTRUCTION.split('Review the conversation above and update two things:\n\n')[1]!
 
+/**
+ * Plugin addendum appended to every review instruction while the topic
+ * detail layer is enabled (the Hermes prompt text itself stays verbatim).
+ * Two positive examples and one counter-example — weak models follow
+ * examples, not abstract routing rules.
+ */
+export const TOPIC_ADDENDUM = '\n\nMemory entries stay one line. When a fact needs more room, '
+  + 'write the detail to a topic file (memory_topic tool: topic_write / topic_append) and keep '
+  + 'the index entry to one line ending with `→ topics/<name>.md`. Every topic file must be '
+  + 'referenced by at least one index entry. Topic file: the user\u2019s deployment topology. '
+  + 'Topic file: this project\u2019s module responsibilities. NOT a topic file: how to debug a '
+  + 'class of crashes — that belongs to a skill\u2019s references/.'
+
 /** Structural view of the host-plane token meter (measured at trigger time). */
 export interface TokenMeterLike {
   measure(session: Session): { totalTokens: number }
@@ -194,6 +209,8 @@ export interface ReviewOutcome {
   readonly steps: number
   /** Skill mutations, when the skill route ran. */
   readonly skillActions?: SkillActionCounts
+  /** Topic files mutated this pass (names only — content never lands here). */
+  readonly topics?: readonly string[]
   /** Per-step tool-call trace lines (bounded), for the activity tab. */
   readonly trace?: readonly string[]
 }
@@ -287,6 +304,8 @@ export async function reviewOnce(
   const replay = routed ? digestHistory(baseMessages) : baseMessages
 
   let instruction = call.instruction ?? (skillEnabled ? COMBINED_REVIEW_INSTRUCTION : REVIEW_INSTRUCTION)
+  const topicsEnabled = config.topicsEnabled && deps.store.hasTopics()
+  if (topicsEnabled) instruction += TOPIC_ADDENDUM
   const focus = call.focus?.trim()
   if (focus !== undefined && focus !== '') {
     instruction += `\n\nThe user explicitly requested this review with the following focus — prioritize it over the general instructions above:\n${focus}`
@@ -305,12 +324,25 @@ export async function reviewOnce(
   ] as unknown as NonNullable<GenerateOptions['tools']>
   const merged = deadline(call.signal, config.reviewTimeoutMs * Math.max(1, config.reviewMaxSteps))
   const forkTools = skillEnabled && deps.skillStore !== undefined ? new ForkSkillTools(deps.skillStore, deps.skillHooks) : undefined
+  // Per-run topic executor: read-before-write evidence is scoped to this pass.
+  const topicTools = topicsEnabled
+    ? new TopicTools(
+        deps.store,
+        new Map(),
+        () => {
+          const c = deps.configSource.get()
+          return { topicsEnabled: c.topicsEnabled, topicReadLines: c.topicReadLines, topicReadMaxBytes: c.topicReadMaxBytes }
+        },
+        () => deps.configSource.get().securityScan,
+      )
+    : undefined
 
   let applied = 0
   let rejected = 0
   let malformed = 0
   let foreign = 0
   const entries: string[] = []
+  const topicsTouched: string[] = []
 
   const dispatchMemory = async (toolCall: ToolCallBlock): Promise<{ text: string; isError: boolean }> => {
     let args: Parameters<typeof validateMemoryArgs>[0]
@@ -342,6 +374,37 @@ export async function reviewOnce(
     }
   }
 
+  /**
+   * Topic dispatch: same JSON parse posture as memory. Topic failures do
+   * NOT count into applied/rejected/malformed (those are memory-write
+   * counters the panel renders as "saved N memory entries"); the trace
+   * line records the failure instead. Mutated topic names go to `topics`.
+   */
+  const dispatchTopic = async (toolCall: ToolCallBlock): Promise<{ text: string; isError: boolean }> => {
+    if (topicTools === undefined) {
+      return { text: 'topic files are not available in this configuration', isError: true }
+    }
+    let args: TopicToolArgs
+    try {
+      const parsed: unknown = JSON.parse(toolCall.arguments)
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('not an object')
+      args = parsed as TopicToolArgs
+    } catch {
+      return { text: 'invalid memory_topic arguments: expected a JSON object', isError: true }
+    }
+    try {
+      const value = await topicTools.execute(args)
+      if (value.name !== undefined && value.action !== 'topic_read' && value.action !== 'topic_list') {
+        if (!topicsTouched.includes(value.name)) topicsTouched.push(value.name)
+      }
+      return { text: renderTopicValue(value), isError: false }
+    } catch (error) {
+      const message = error instanceof Error ? error.message.split('\n')[0]! : String(error)
+      ctx.logger.warn(`memory-hermes review: topic op dropped: ${message}`)
+      return { text: message, isError: true }
+    }
+  }
+
   const loop = await runForkLoop(ctx, {
     provider,
     model,
@@ -354,6 +417,7 @@ export async function reviewOnce(
     sessionId: call.session.id,
     dispatch: async (toolCall) => {
       if (toolCall.name === TOOL_NAME) return dispatchMemory(toolCall)
+      if (toolCall.name === TOPIC_TOOL_NAME) return dispatchTopic(toolCall)
       if (forkTools !== undefined && (SKILL_TOOL_NAMES as readonly string[]).includes(toolCall.name)) {
         return forkTools.execute(toolCall.name, toolCall.arguments)
       }
@@ -370,6 +434,7 @@ export async function reviewOnce(
     entries,
     steps: loop.steps,
     ...forkTools === undefined ? {} : { skillActions: forkTools.counts },
+    ...topicsTouched.length === 0 ? {} : { topics: topicsTouched },
     ...loop.trace.length === 0 ? {} : { trace: loop.trace },
   }
 }
@@ -453,6 +518,7 @@ export function installReview(ctx: Context, deps: ReviewDeps): ReviewControl {
           foreign: outcome?.foreign ?? 0,
           ...outcome?.steps !== undefined ? { steps: outcome.steps } : {},
           ...outcome?.skillActions === undefined ? {} : { skillActions: outcome.skillActions },
+          ...outcome?.topics === undefined ? {} : { topics: [...outcome.topics] },
           ...outcome?.trace === undefined ? {} : { trace: [...outcome.trace] },
           ...outcome !== undefined && outcome.entries.length > 0 ? { entries: [...outcome.entries] } : {},
           ...outcome === undefined ? { error: 'session has no routed request header' } : {},

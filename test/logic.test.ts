@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { LIST_CALL, RPC_CHANNEL, cleanErrorMessage, formatDuration, formatUsage, mutateCall, summarizeRun, unwrapRpc } from '../src/client/logic.js'
+import { LIST_CALL, RPC_CHANNEL, cleanErrorMessage, formatBytes, formatDuration, formatUsage, mutateCall, summarizeRun, unwrapRpc } from '../src/client/logic.js'
 
 describe('call shapes', () => {
   it('list targets the gateway namespace with exactly-empty args', () => {
@@ -91,5 +91,17 @@ describe('summarizeRun', () => {
       foreign: 0,
       skillActions: { created: 1, updated: 0, patched: 2, deleted: 0, filesWritten: 1, filesRemoved: 0, skills: ['dsh-plugin-workflow'] },
     })).toBe('skill:新建 1/补丁 2/支持文件 1(dsh-plugin-workflow)')
+  })
+
+  it('summarizes topic writes with names', () => {
+    expect(summarizeRun({ applied: 1, rejected: 0, malformed: 0, foreign: 0, topics: ['deploy-topology'] }))
+      .toBe('存了 1 条记忆 · 写了 1 个主题文件(deploy-topology)')
+  })
+})
+
+describe('formatBytes', () => {
+  it('renders bytes below a kB raw and larger sizes in kB', () => {
+    expect(formatBytes(512)).toBe('512 B')
+    expect(formatBytes(3993)).toBe('3.9 kB')
   })
 })

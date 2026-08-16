@@ -28,6 +28,11 @@ const RESOLVED: Resolved = {
   curatorMaxTokens: 4000,
   curatorTimeoutMs: 300_000,
   curatorMaxBackups: 5,
+  topicsEnabled: true,
+  topicMaxBytes: 32768,
+  topicMaxFiles: 100,
+  topicReadLines: 400,
+  topicReadMaxBytes: 8192,
 }
 
 describe('createConfigSource', () => {

@@ -10,9 +10,9 @@ import { createElement } from 'react'
 import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
 import type {} from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
-import type { PanelListResult, PanelMutateOutcome, PanelReviewRunsResult, PanelSkillsResult } from '../gateway.js'
+import type { PanelListResult, PanelMutateOutcome, PanelReviewRunsResult, PanelSkillsResult, PanelTopicsResult } from '../gateway.js'
 import type { MemoryToolArgs } from '../tool.js'
-import { LIST_CALL, LIST_REVIEW_RUNS_CALL, LIST_SKILLS_CALL, mutateCall, unwrapRpc } from './logic.js'
+import { LIST_CALL, LIST_REVIEW_RUNS_CALL, LIST_SKILLS_CALL, LIST_TOPICS_CALL, mutateCall, unwrapRpc } from './logic.js'
 import { MemoryPanel } from './MemoryPanel.js'
 import type { MemoryPanelFace } from './MemoryPanel.js'
 
@@ -38,6 +38,10 @@ export function apply(ctx: Context): void {
     listSkills: async () =>
       unwrapRpc<PanelSkillsResult>(
         await connection.rpc.call(LIST_SKILLS_CALL.channel, LIST_SKILLS_CALL.endpoint, LIST_SKILLS_CALL.payload),
+      ),
+    listTopics: async () =>
+      unwrapRpc<PanelTopicsResult>(
+        await connection.rpc.call(LIST_TOPICS_CALL.channel, LIST_TOPICS_CALL.endpoint, LIST_TOPICS_CALL.payload),
       ),
   }
   // One settings page per list entry. The owner hands sections only
