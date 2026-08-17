@@ -248,12 +248,16 @@ export class TopicTools {
     }
     const covered = start + selected.length
     const truncated = byteCut || covered < all.length
-    // Contiguous coverage only: a read starting past the covered prefix
-    // leaves a gap and does not advance the frontier.
+    // Contiguous coverage only, and only within ONE version: a read starting
+    // past the covered prefix leaves a gap, and a file whose size changed
+    // between pages (rewritten mid-paging by another context) resets the
+    // frontier — otherwise pages from different versions would stitch into
+    // a false complete.
     const prior = this.evidence.get(name)
-    let coveredThrough = prior?.coveredThrough ?? 0
+    const textBytes = Buffer.byteLength(text, 'utf8')
+    let coveredThrough = prior !== undefined && prior.bytes === textBytes ? prior.coveredThrough : 0
     if (start <= coveredThrough) coveredThrough = Math.max(coveredThrough, covered)
-    this.evidence.set(name, { coveredThrough, lines: all.length, bytes: Buffer.byteLength(text, 'utf8') })
+    this.evidence.set(name, { coveredThrough, lines: all.length, bytes: textBytes })
     return {
       action: 'topic_read',
       name,

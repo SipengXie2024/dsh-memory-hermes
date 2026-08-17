@@ -329,6 +329,24 @@ describe('the destructive-read gate', () => {
     await expect(exec(tools, { action: 'topic_remove', name: 'gap-topic' })).rejects.toThrow(/offset=N/)
   })
 
+  it('a rewrite mid-paging resets the frontier (no cross-version stitch)', async () => {
+    await seed('stitched-topic', linesFile(1200))
+    const tools = executor()
+    await exec(tools, { action: 'topic_read', name: 'stitched-topic' }) // page 1 of the OLD version
+    // Another context rewrites the whole file (different size) between pages.
+    await store.writeTopic('stitched-topic', Array.from({ length: 1300 }, (_, i) => `new ${i + 1}`).join('\n'))
+    await exec(tools, { action: 'topic_read', name: 'stitched-topic', offset: 401 }) // page 2 of the NEW version
+    // The old front half was never seen in the new version: still closed.
+    await expect(exec(tools, { action: 'topic_remove', name: 'stitched-topic' })).rejects.toThrow(/offset=N|changed since/)
+    // Re-reading the new version from the top reopens it.
+    await exec(tools, { action: 'topic_read', name: 'stitched-topic' })
+    let page = await exec(tools, { action: 'topic_read', name: 'stitched-topic', offset: 401 })
+    while (page.truncated === true) {
+      page = await exec(tools, { action: 'topic_read', name: 'stitched-topic', offset: (page.offset ?? 1) + page.lines!.length })
+    }
+    await expect(exec(tools, { action: 'topic_remove', name: 'stitched-topic' })).resolves.toBeDefined()
+  })
+
   it('the continuation hint advances across pages', async () => {
     await seed('paged-topic', linesFile(1200))
     const tools = executor()
