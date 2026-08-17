@@ -329,6 +329,23 @@ describe('the destructive-read gate', () => {
     await expect(exec(tools, { action: 'topic_remove', name: 'gap-topic' })).rejects.toThrow(/offset=N/)
   })
 
+  it('an append mid-paging resets the frontier and says so', async () => {
+    await seed('midappend-topic', linesFile(500))
+    const tools = executor()
+    await exec(tools, { action: 'topic_read', name: 'midappend-topic' }) // 400/500
+    await store.appendTopic('midappend-topic', 'fork addition') // another context writes
+    const page2 = await exec(tools, { action: 'topic_read', name: 'midappend-topic', offset: 401 })
+    expect(page2.reset).toBe(true)
+    expect(renderTopicValue(page2)).toContain('re-read from offset=1')
+    // Even having seen every current line, the reset frontier keeps the gate closed…
+    await expect(exec(tools, { action: 'topic_remove', name: 'midappend-topic' }))
+      .rejects.toThrow(/begin again from offset=1/)
+    // …until one clean pass from the top.
+    await exec(tools, { action: 'topic_read', name: 'midappend-topic' })
+    await exec(tools, { action: 'topic_read', name: 'midappend-topic', offset: 401 })
+    await expect(exec(tools, { action: 'topic_remove', name: 'midappend-topic' })).resolves.toBeDefined()
+  })
+
   it('a rewrite mid-paging resets the frontier (no cross-version stitch)', async () => {
     await seed('stitched-topic', linesFile(1200))
     const tools = executor()

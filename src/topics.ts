@@ -60,6 +60,8 @@ export interface TopicValue {
   totalLines?: number
   /** topic_read: the 1-based offset this page started at (drives the continuation hint). */
   offset?: number
+  /** topic_read: the file changed since the last read; coverage restarted from zero. */
+  reset?: boolean
   truncated?: boolean
   topics?: TopicListEntry[]
 }
@@ -255,7 +257,8 @@ export class TopicTools {
     // a false complete.
     const prior = this.evidence.get(name)
     const textBytes = Buffer.byteLength(text, 'utf8')
-    let coveredThrough = prior !== undefined && prior.bytes === textBytes ? prior.coveredThrough : 0
+    const reset = prior !== undefined && prior.bytes !== textBytes
+    let coveredThrough = reset ? 0 : (prior?.coveredThrough ?? 0)
     if (start <= coveredThrough) coveredThrough = Math.max(coveredThrough, covered)
     this.evidence.set(name, { coveredThrough, lines: all.length, bytes: textBytes })
     return {
@@ -266,6 +269,7 @@ export class TopicTools {
       offset: start + 1,
       bytes,
       ...truncated ? { truncated: true } : {},
+      ...reset ? { reset: true } : {},
     }
   }
 
@@ -309,7 +313,9 @@ export class TopicTools {
       throw new HarnessError(
         `You have only read part of "${name}" (the read was truncated). Finish reading it `
         + '(topic_read with offset=N) before overwriting or deleting it — otherwise the '
-        + 'unread part would be destroyed without ever entering the transcript.',
+        + 'unread part would be destroyed without ever entering the transcript. If you '
+        + 'already paged through and the file changed mid-way, your coverage restarted: '
+        + 'begin again from offset=1.',
         'MEMORY_TOPIC_PARTIALLY_READ',
       )
     }
@@ -377,7 +383,10 @@ export function renderTopicValue(value: TopicValue): string {
       const hint = value.truncated === true
         ? `\n…truncated (${(value.lines ?? []).length}/${value.totalLines} lines shown); continue with offset=${(value.offset ?? 1) + (value.lines ?? []).length}.`
         : ''
-      return `topics/${value.name}.md:\n${body}${hint}`
+      const resetNote = value.reset === true
+        ? '\n(file changed since your last read; coverage restarted — re-read from offset=1 before overwrite/remove.)'
+        : ''
+      return `topics/${value.name}.md:\n${body}${hint}${resetNote}`
     }
     case 'topic_write':
       return `Saved. topics/${value.name}.md is now ${formatKib(value.bytes ?? 0)} (cap ${formatKib(value.cap ?? 0)}).`
@@ -493,6 +502,7 @@ export function buildTopicTool(deps: {
           totalLines: { type: 'integer' },
           offset: { type: 'integer' },
           truncated: { type: 'boolean' },
+          reset: { type: 'boolean' },
           topics: {
             type: 'array',
             items: {
