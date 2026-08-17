@@ -842,4 +842,29 @@ describe('review fork × topic layer', () => {
     expect(outcome?.trace?.[0]).toContain('not available')
     expect(existsSync(join(dir, 'topics'))).toBe(false)
   })
+
+  it('self-provides the topic schema when the session header predates the tool', async () => {
+    const { ctx, calls } = reviewCtx([[...textChunks(0, 'NOTHING'), ...finishChunk('stop')]])
+    await reviewOnce(ctx, topicDeps({ skillReview: false }), { session: fakeSession(), signal: signal() })
+    const tools = calls[0]!.tools as { name: string }[]
+    expect(tools.filter(tool => tool.name === 'memory_topic')).toHaveLength(1)
+  })
+
+  it('does not duplicate the schema when the header already carries it', async () => {
+    const { ctx, calls } = reviewCtx([[...textChunks(0, 'NOTHING'), ...finishChunk('stop')]])
+    const session = sessionWith({
+      ...HEADER,
+      tools: [...HEADER.tools, { name: 'memory_topic', description: 'x', parameters: { type: 'object' } }],
+    })
+    await reviewOnce(ctx, topicDeps({ skillReview: false }), { session, signal: signal() })
+    const tools = calls[0]!.tools as { name: string }[]
+    expect(tools.filter(tool => tool.name === 'memory_topic')).toHaveLength(1)
+  })
+
+  it('adds no topic schema when the layer is disabled', async () => {
+    const { ctx, calls } = reviewCtx([[...textChunks(0, 'NOTHING'), ...finishChunk('stop')]])
+    await reviewOnce(ctx, topicDeps({ skillReview: false, topicsEnabled: false }), { session: fakeSession(), signal: signal() })
+    const tools = calls[0]!.tools as { name: string }[]
+    expect(tools.some(tool => tool.name === 'memory_topic')).toBe(false)
+  })
 })

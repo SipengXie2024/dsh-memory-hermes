@@ -38,7 +38,7 @@ import type { CuratorSkillStore } from './skills/store.js'
 import type { SkillActionCounts, SkillMutationHooks } from './skills/tools.js'
 import type { MemoryStore } from './store.js'
 import { TOOL_NAME, validateMemoryArgs, writtenText } from './tool.js'
-import { renderTopicValue, TOPIC_TOOL_NAME, TopicTools } from './topics.js'
+import { renderTopicValue, TOPIC_TOOL_NAME, TopicTools, forkTopicToolSchema } from './topics.js'
 import type { TopicToolArgs } from './topics.js'
 
 /** Memory-only prompt (skillReview off). Hermes' memory route is narrow by
@@ -321,6 +321,13 @@ export async function reviewOnce(
   const tools = [
     ...(header.tools === undefined ? [] : [...header.tools]),
     ...(skillEnabled ? forkSkillToolSchemas() : []),
+    // Self-provide the topic schema: sessions whose header predates the
+    // tool (hot-reload survivors) would otherwise be taught an addendum
+    // they cannot act on. Deduped by name — duplicate declarations make
+    // providers reject the request.
+    ...topicsEnabled && !(header.tools ?? []).some(tool => (tool as { name?: string }).name === TOPIC_TOOL_NAME)
+      ? [forkTopicToolSchema()]
+      : [],
   ] as unknown as NonNullable<GenerateOptions['tools']>
   const merged = deadline(call.signal, config.reviewTimeoutMs * Math.max(1, config.reviewMaxSteps))
   const forkTools = skillEnabled && deps.skillStore !== undefined ? new ForkSkillTools(deps.skillStore, deps.skillHooks) : undefined

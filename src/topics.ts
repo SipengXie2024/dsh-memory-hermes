@@ -58,6 +58,8 @@ export interface TopicValue {
   cap?: number
   lines?: string[]
   totalLines?: number
+  /** topic_read: the 1-based offset this page started at (drives the continuation hint). */
+  offset?: number
   truncated?: boolean
   topics?: TopicListEntry[]
 }
@@ -79,7 +81,9 @@ function present(value: string | undefined): value is string {
 }
 
 function meaningful(value: string | undefined): value is string {
-  return typeof value !== 'undefined' && value.trim() !== ''
+  // typeof-based so a null smuggled past JSON.parse (the fork dispatches
+  // direct execute() calls) fails validation instead of crashing .trim().
+  return typeof value === 'string' && value.trim() !== ''
 }
 
 function requireName(args: TopicToolArgs): string {
@@ -142,10 +146,12 @@ export function validateTopicArgs(args: TopicToolArgs): ValidatedTopicCall {
   }
 }
 
-/** Whether an index entry list references topics/<name>.md (word-boundary tolerant). */
+/** Whether an index entry list references topics/<name>.md. The prefix check
+ *  excludes letters/digits/dashes so `topology` does not match
+ *  `deploy-topology.md` (a dash would create a regex word boundary). */
 export function isReferenced(name: string, indexText: string): boolean {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return new RegExp(`\\b${escaped}\\.md\\b`).test(indexText)
+  return new RegExp(`(^|[^A-Za-z0-9-])${escaped}\\.md\\b`).test(indexText)
 }
 
 /** Human byte size (`3.9 kB`), for tool results and the /memory topics listing. */
@@ -154,12 +160,20 @@ export function formatKib(bytes: number): string {
 }
 
 /**
- * One execution context's read-before-write evidence: name -> whether the
- * file's FULL content is known to this context. `complete` only ever
- * accumulates (OR semantics): a full read followed by a partial re-check
- * must not re-close the gate.
+ * One execution context's read-before-write evidence. `coveredThrough` is
+ * the highest line number CONTIGUOUSLY read from the top (gap reads do not
+ * advance it); `lines`/`bytes` describe the file as last observed. The gate
+ * derives completeness at decision time — coveredThrough >= current lines
+ * AND bytes == current size — so a file changed since the last read (e.g.
+ * by a background review fork) automatically re-closes the gate, while a
+ * partial re-check of an unchanged file never does.
  */
-export type ReadEvidence = Map<string, { complete: boolean }>
+export interface TopicEvidence {
+  coveredThrough: number
+  lines: number
+  bytes: number
+}
+export type ReadEvidence = Map<string, TopicEvidence>
 
 export class TopicTools {
   constructor(
@@ -212,7 +226,8 @@ export class TopicTools {
     const text = await this.store.readTopic(name)
     const all = text.split('\n')
     const start = (offset ?? 1) - 1
-    const maxLines = limit ?? tunables.topicReadLines
+    // The configured window is both the default and the maximum page size.
+    const maxLines = Math.min(limit ?? tunables.topicReadLines, tunables.topicReadLines)
     const selected: string[] = []
     let bytes = 0
     let byteCut = false
@@ -233,22 +248,43 @@ export class TopicTools {
     }
     const covered = start + selected.length
     const truncated = byteCut || covered < all.length
-    // OR-accumulate: a partial re-check never revokes a prior full read.
+    // Contiguous coverage only: a read starting past the covered prefix
+    // leaves a gap and does not advance the frontier.
     const prior = this.evidence.get(name)
-    this.evidence.set(name, { complete: (prior?.complete ?? false) || (!truncated && start === 0) })
+    let coveredThrough = prior?.coveredThrough ?? 0
+    if (start <= coveredThrough) coveredThrough = Math.max(coveredThrough, covered)
+    this.evidence.set(name, { coveredThrough, lines: all.length, bytes: Buffer.byteLength(text, 'utf8') })
     return {
       action: 'topic_read',
       name,
       lines: selected,
       totalLines: all.length,
+      offset: start + 1,
       bytes,
       ...truncated ? { truncated: true } : {},
     }
   }
 
-  /** Overwrite/delete need the FULL file known; append only needs any look. */
-  private requireEvidence(name: string, existed: boolean, destructive: 'overwrite' | 'append' | 'remove'): void {
-    if (!existed) return // creating destroys nothing
+  /** Current on-disk state for gate decisions; undefined = does not exist. */
+  private async currentState(name: string): Promise<{ bytes: number; lines: number } | undefined> {
+    const size = await this.store.topicSize(name)
+    if (size === undefined) return undefined
+    const text = await this.store.readTopic(name)
+    return { bytes: Buffer.byteLength(text, 'utf8'), lines: text.split('\n').length }
+  }
+
+  /**
+   * Gate destructive actions on FULL, FRESH knowledge: the file's current
+   * content must be covered by contiguous reads made against its current
+   * size. Append is non-destructive — any prior look suffices. Creating
+   * destroys nothing and is always allowed.
+   */
+  private requireEvidence(
+    name: string,
+    current: { bytes: number; lines: number } | undefined,
+    destructive: 'overwrite' | 'append' | 'remove',
+  ): void {
+    if (current === undefined) return
     const record = this.evidence.get(name)
     if (record === undefined) {
       throw new HarnessError(
@@ -256,7 +292,16 @@ export class TopicTools {
         'MEMORY_TOPIC_UNREAD',
       )
     }
-    if (destructive !== 'append' && !record.complete) {
+    if (destructive === 'append') return
+    if (record.bytes !== current.bytes) {
+      throw new HarnessError(
+        `"${name}" changed since you last read it (a background review may have appended). `
+        + 'topic_read it again before overwriting or deleting — otherwise content you never '
+        + 'saw would be destroyed without entering the transcript.',
+        'MEMORY_TOPIC_STALE_READ',
+      )
+    }
+    if (record.coveredThrough < current.lines) {
       throw new HarnessError(
         `You have only read part of "${name}" (the read was truncated). Finish reading it `
         + '(topic_read with offset=N) before overwriting or deleting it — otherwise the '
@@ -273,28 +318,40 @@ export class TopicTools {
   }
 
   private async write(name: string, content: string): Promise<TopicValue> {
-    const existed = (await this.store.topicSize(name)) !== undefined
-    this.requireEvidence(name, existed, 'overwrite')
+    this.requireEvidence(name, await this.currentState(name), 'overwrite')
     this.scanWrite(content)
     const info: TopicInfo = await this.store.writeTopic(name, content)
     // A write means the whole current content is self-produced: full knowledge.
-    this.evidence.set(name, { complete: true })
+    this.evidence.set(name, { coveredThrough: info.lines!, lines: info.lines!, bytes: info.bytes })
     return { action: 'topic_write', name, bytes: info.bytes, cap: this.store.topicCaps().maxBytes }
   }
 
   private async append(name: string, content: string): Promise<TopicValue> {
-    const existed = (await this.store.topicSize(name)) !== undefined
-    this.requireEvidence(name, existed, 'append')
+    const current = await this.currentState(name)
+    this.requireEvidence(name, current, 'append')
     this.scanWrite(content)
     const info = await this.store.appendTopic(name, content)
-    // The model knows only what it appended; never upgrade to complete.
-    if (!this.evidence.has(name)) this.evidence.set(name, { complete: false })
+    // Appending to a file whose full current content was known extends full
+    // knowledge (the model knows what it appended); otherwise the coverage
+    // frontier stays put and freshness simply refreshes. An append-created
+    // file starts UNKNOWN (strict but safe): only its tail is self-produced.
+    const prior = this.evidence.get(name)
+    const wasComplete = prior !== undefined && current !== undefined
+      && prior.bytes === current.bytes && prior.coveredThrough >= current.lines
+    if (prior === undefined) {
+      this.evidence.set(name, { coveredThrough: 0, lines: info.lines!, bytes: info.bytes })
+    } else {
+      this.evidence.set(name, {
+        coveredThrough: wasComplete ? info.lines! : prior.coveredThrough,
+        lines: info.lines!,
+        bytes: info.bytes,
+      })
+    }
     return { action: 'topic_append', name, bytes: info.bytes, cap: this.store.topicCaps().maxBytes }
   }
 
   private async remove(name: string): Promise<TopicValue> {
-    const existed = (await this.store.topicSize(name)) !== undefined
-    this.requireEvidence(name, existed, 'remove')
+    this.requireEvidence(name, await this.currentState(name), 'remove')
     await this.store.removeTopic(name)
     this.evidence.delete(name)
     return { action: 'topic_remove', name }
@@ -314,7 +371,7 @@ export function renderTopicValue(value: TopicValue): string {
     case 'topic_read': {
       const body = (value.lines ?? []).join('\n')
       const hint = value.truncated === true
-        ? `\n…truncated (${(value.lines ?? []).length}/${value.totalLines} lines shown); continue with offset=${(value.lines ?? []).length + 1}.`
+        ? `\n…truncated (${(value.lines ?? []).length}/${value.totalLines} lines shown); continue with offset=${(value.offset ?? 1) + (value.lines ?? []).length}.`
         : ''
       return `topics/${value.name}.md:\n${body}${hint}`
     }
@@ -333,6 +390,37 @@ const ACTION_TITLES: Readonly<Record<TopicAction, string>> = {
   topic_write: 'Write topic file',
   topic_append: 'Append to topic file',
   topic_remove: 'Remove topic file',
+}
+
+/**
+ * Plain-JSON-schema declaration for the background review fork, in the
+ * same shape as forkSkillToolSchemas(). The fork normally inherits the
+ * tool from header.tools, but sessions created before the tool existed
+ * (e.g. across a hot-reload) lack it — the review appends this schema
+ * itself, deduped by name.
+ */
+export function forkTopicToolSchema(): unknown {
+  return {
+    name: TOPIC_TOOL_NAME,
+    description:
+      'Manage topic files — the detail layer behind one-line memory index entries. '
+      + 'Write detail with topic_write / topic_append (topics/<name>.md, kebab-case name); '
+      + 'read with topic_read (bounded window, 1-based offset to continue); '
+      + 'topic_list lists all. Overwriting or removing requires a COMPLETE read first; '
+      + 'appending requires any prior read; creating needs none.',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: [...TOPIC_ACTIONS] },
+        name: { type: 'string', description: 'Topic name, kebab-case (topics/<name>.md). Not for topic_list.' },
+        content: { type: 'string', description: 'Full content (topic_write) or text to append (topic_append).' },
+        offset: { type: 'integer', description: 'topic_read: 1-based first line (default 1).' },
+        limit: { type: 'integer', description: 'topic_read: max lines (default/max the read window).' },
+      },
+      required: ['action'],
+      additionalProperties: false,
+    },
+  }
 }
 
 /** Options for defineTool(); exported un-compiled so tests can drive execute(). */
@@ -399,6 +487,7 @@ export function buildTopicTool(deps: {
           cap: { type: 'integer' },
           lines: { type: 'array', items: { type: 'string' } },
           totalLines: { type: 'integer' },
+          offset: { type: 'integer' },
           truncated: { type: 'boolean' },
           topics: {
             type: 'array',

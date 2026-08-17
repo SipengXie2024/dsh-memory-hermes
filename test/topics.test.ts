@@ -300,7 +300,71 @@ describe('the destructive-read gate', () => {
     await expect(exec(tools, { action: 'topic_remove', name: 'self-made' })).resolves.toBeDefined()
   })
 
-  it('regression guard: partial read -> append -> remove stays refused', async () => {
+  it('OR-accumulates: a partial re-check never re-closes a full read', async () => {
+    await seed('accum-topic', linesFile(500))
+    const tools = executor()
+    // Page through the whole file (the window clamps limit to 400).
+    await exec(tools, { action: 'topic_read', name: 'accum-topic' })
+    await exec(tools, { action: 'topic_read', name: 'accum-topic', offset: 401 })
+    await exec(tools, { action: 'topic_read', name: 'accum-topic', offset: 200 }) // partial re-check
+    await expect(exec(tools, { action: 'topic_remove', name: 'accum-topic' })).resolves.toBeDefined()
+  })
+
+  it('sequential paging opens the gate for files bigger than one read window', async () => {
+    // 120 lines x ~100 bytes ≈ 12 KB — above the 8 KB read cap, so no single
+    // read can ever be complete.
+    await seed('big-topic', Array.from({ length: 120 }, (_, i) => `line ${i + 1} ${'x'.repeat(90)}`).join('\n'))
+    const tools = executor()
+    const page1 = await exec(tools, { action: 'topic_read', name: 'big-topic' })
+    expect(page1.truncated).toBe(true)
+    const page2 = await exec(tools, { action: 'topic_read', name: 'big-topic', offset: (page1.lines!.length + 1) })
+    expect(page2.truncated).toBeUndefined()
+    await expect(exec(tools, { action: 'topic_write', name: 'big-topic', content: 'rewritten' })).resolves.toBeDefined()
+  })
+
+  it('a gap read does not advance the coverage frontier', async () => {
+    await seed('gap-topic', linesFile(1200))
+    const tools = executor()
+    await exec(tools, { action: 'topic_read', name: 'gap-topic', offset: 801 }) // middle unseen
+    await expect(exec(tools, { action: 'topic_remove', name: 'gap-topic' })).rejects.toThrow(/offset=N/)
+  })
+
+  it('the continuation hint advances across pages', async () => {
+    await seed('paged-topic', linesFile(1200))
+    const tools = executor()
+    const page1 = await exec(tools, { action: 'topic_read', name: 'paged-topic' })
+    expect(renderTopicValue(page1)).toContain('offset=401')
+    const page2 = await exec(tools, { action: 'topic_read', name: 'paged-topic', offset: 401 })
+    expect(renderTopicValue(page2)).toContain('offset=801')
+  })
+
+  it('limit is clamped to the configured window (default and maximum)', async () => {
+    await seed('clamp-topic', linesFile(500))
+    const value = await exec(executor(), { action: 'topic_read', name: 'clamp-topic', limit: 100000 })
+    expect(value.lines).toHaveLength(400)
+    expect(value.truncated).toBe(true)
+  })
+
+  it('a file changed since the read re-closes the gate until re-read', async () => {
+    await seed('stale-topic', linesFile(10))
+    const tools = executor()
+    await exec(tools, { action: 'topic_read', name: 'stale-topic' }) // full read
+    // A background review fork appends behind this context's back.
+    await store.appendTopic('stale-topic', 'fork addition')
+    await expect(exec(tools, { action: 'topic_remove', name: 'stale-topic' })).rejects.toThrow(/changed since/)
+    // Reading the new tail restores full fresh knowledge.
+    await exec(tools, { action: 'topic_read', name: 'stale-topic' })
+    await expect(exec(tools, { action: 'topic_remove', name: 'stale-topic' })).resolves.toBeDefined()
+  })
+
+  it('appending to a fully-known file preserves full knowledge', async () => {
+    const tools = executor()
+    await exec(tools, { action: 'topic_write', name: 'flow-topic', content: 'mine' })
+    await exec(tools, { action: 'topic_append', name: 'flow-topic', content: 'more' })
+    await expect(exec(tools, { action: 'topic_remove', name: 'flow-topic' })).resolves.toBeDefined()
+  })
+
+  it('append still never upgrades a partial read (regression guard)', async () => {
     await seed('guard-topic', linesFile(500))
     const tools = executor()
     await exec(tools, { action: 'topic_read', name: 'guard-topic' }) // partial
@@ -308,12 +372,9 @@ describe('the destructive-read gate', () => {
     await expect(exec(tools, { action: 'topic_remove', name: 'guard-topic' })).rejects.toThrow(/offset=N/)
   })
 
-  it('OR-accumulates: a partial re-check never re-closes a full read', async () => {
-    await seed('accum-topic', linesFile(500))
-    const tools = executor()
-    await exec(tools, { action: 'topic_read', name: 'accum-topic', limit: 500 }) // full
-    await exec(tools, { action: 'topic_read', name: 'accum-topic', offset: 200 }) // partial re-check
-    await expect(exec(tools, { action: 'topic_remove', name: 'accum-topic' })).resolves.toBeDefined()
+  it('null smuggled past JSON.parse fails validation, not with a TypeError', async () => {
+    await expect(exec(executor(), { action: 'topic_write', name: null as unknown as string, content: 'x' }))
+      .rejects.toThrow(/requires a topic name/)
   })
 
   it('evidence is per-executor: a fresh context must read again', async () => {
@@ -350,6 +411,8 @@ describe('isReferenced / topic_list orphans', () => {
     expect(isReferenced('deploy-topology', String.raw`- see C:\Users\x\.dsh\memory\topics\deploy-topology.md`)).toBe(true)
     expect(isReferenced('deploy-topology', '- unrelated entry')).toBe(false)
     expect(isReferenced('deploy', '- 部署拓扑 → topics/deploy-topology.md')).toBe(false)
+    // A dash does not count as a separator: suffix collisions are orphans.
+    expect(isReferenced('topology', '- 部署拓扑 → topics/deploy-topology.md')).toBe(false)
   })
 
   it('topic_list marks files no index entry references as orphans', async () => {

@@ -65,6 +65,8 @@ export interface TopicStoreOptions {
 export interface TopicInfo {
   readonly name: string
   readonly bytes: number
+  /** Total line count; present on write/append results (gate bookkeeping). */
+  readonly lines?: number
 }
 
 /** Same rule as skill names: kebab-case, so path escape is impossible. */
@@ -292,7 +294,7 @@ export class MemoryStore {
       return this.lockedPath(path, `topics/${name}.md`, async () => {
         await this.requireCreateRoom(name, path)
         await writeFileAtomic(path, content, { mode: 0o600, dirMode: 0o700 })
-        return { name, bytes }
+        return { name, bytes, lines: content.split('\n').length }
       })
     })
   }
@@ -311,7 +313,7 @@ export class MemoryStore {
         if (bytes > topics.maxBytes) throw topicTooLargeError(name, bytes, topics.maxBytes)
         if (existing === '') await this.requireCreateRoom(name, path)
         await writeFileAtomic(path, combined, { mode: 0o600, dirMode: 0o700 })
-        return { name, bytes }
+        return { name, bytes, lines: combined.split('\n').length }
       })
     })
   }

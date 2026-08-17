@@ -216,6 +216,9 @@ ctx.tools.restrict({ deny: ['memory'] })
 - review 失败静默是取舍:后台调用出错只记日志与 sidecar,不重试,主对话永远不因 review 受影响;「没存上」在设置页活动页签可见。
 - review 的写入质量(存不存、存多准)取决于模型对 review 指令的遵守度,因模型而异;不满意就关掉或换 `reviewModel`。
 - `topicsEnabled` 的行为半边(动作运行时拒绝、review 不追加 addendum)热生效,但工具 schema 是 apply 时静态注册的——schema 半边(动作从工具列表消失)要重载插件才变。同理,minimal preset 的会话没有 GUIDANCE 段落(persona complete 抑制装配期追加),memory_topic 只能靠工具描述自行发现,与 memory 工具现状一致。
+- **code preset 会话的后台 review 整体不可用**(v3 起既有边界):code 模式下所有工具调用都走 `run_code` 包装,而 review fork 按名分发、拒绝 run_code——memory 写与 memory_topic 写在这些会话里都会被拒。standard preset 不受影响。
+- `topicsEnabled: false` 时,overflowError 与 GUIDANCE 基线段里的「写进主题文件」文案不会跟着关(这两处拿不到开关,修起来成本高于收益);工具运行时会拒绝,以工具报错为准。
+- 手工建的非 kebab-case 主题文件(如 `My Notes.md`)在 `/memory topics`、面板、`topic_list` 三处都不可见——模型本来也寻址不到它们,合理;它们只占磁盘。
 - 面板刷新是拉取不是推送(dsh 的 client 推送通道是白名单制,插件进不去):别处写入(模型工具 / review / 另一进程)后,点 Refresh 或重开设置页才可见。
 - 插件**不**往 session 日志 append 自定义事件类型:dsh 的日志事件词汇是白名单制,未知类型会让整份日志重放被拒。自省可观测性走 sidecar,不走日志。
 
